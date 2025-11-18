@@ -1,0 +1,44 @@
+syntax = "proto3";
+package kv;
+
+service KeyValueStore {
+  rpc Get(GetRequest) returns (GetResponse);
+  rpc Put(PutRequest) returns (PutResponse);
+  rpc Delete(DeleteRequest) returns (DeleteResponse);
+  rpc CompareAndSet(CompareAndSetRequest) returns (CompareAndSetResponse);
+}
+
+message GetRequest {
+  bytes key = 1;
+}
+
+message GetResponse {
+  bytes value = 1;
+}
+
+message PutRequest {
+  bytes key = 1;
+  bytes value = 2;
+}
+
+message PutResponse {
+  bool ok = 1;
+}
+
+message DeleteRequest {
+  bytes key = 1;
+}
+
+message DeleteResponse {
+  bool ok = 1;
+}
+
+message CompareAndSetRequest {
+  bytes key = 1;
+  bytes expected = 2;
+  bytes value = 3;
+}
+
+message CompareAndSetResponse {
+  bool ok = 1;
+}
