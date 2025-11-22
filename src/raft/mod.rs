@@ -1,22 +1,31 @@
 pub mod raft {
     tonic::include_proto!("raft");
 }
+pub mod log;
 mod state;
-use crate::{kv::LatticeStore, raft::state::RaftNodeRole};
+use crate::{
+    kv::{KvCommand, LatticeStore},
+    raft::{
+        log::{LatticeLog, Log},
+        state::RaftNodeRole,
+    },
+};
 use raft::{
     AppendEntriesRequest, AppendEntriesResponse, InstallSnapshotChunk, InstallSnapshotResponse,
     VoteRequest, VoteResponse,
     raft_node_client::RaftNodeClient,
     raft_node_server::{RaftNode, RaftNodeServer},
 };
-use std::sync::Arc;
+use serde::ser::Error;
+use std::{cmp::min, sync::Arc};
 use tokio::sync::RwLock;
 
 pub struct LatticeRaftNode {
     store: Arc<RwLock<LatticeStore>>,
+    log: Arc<RwLock<LatticeLog>>,
     voted_for: RwLock<Option<String>>,
     current_term: RwLock<u64>,
-    /// Todo: Add log entries
+
     // Volatile
     commit_index: RwLock<u64>,
     last_applied: RwLock<u64>,
@@ -24,15 +33,40 @@ pub struct LatticeRaftNode {
 }
 
 impl LatticeRaftNode {
-    pub fn new(store: Arc<RwLock<LatticeStore>>) -> LatticeRaftNode {
+    pub fn new(store: Arc<RwLock<LatticeStore>>, log: Arc<RwLock<LatticeLog>>) -> LatticeRaftNode {
         Self {
             store,
+            log,
             current_term: RwLock::new(0),
             commit_index: RwLock::new(0),
             last_applied: RwLock::new(0),
             voted_for: RwLock::new(None),
             role: RwLock::new(RaftNodeRole::Follower),
         }
+    }
+}
+
+impl LatticeRaftNode {
+    async fn apply_commited_entries(&self) -> Result<(), rmp_serde::decode::Error> {
+        let mut last_applied = *self.last_applied.write().await;
+        let commit_index = *self.commit_index.read().await;
+        let log = self.log.read().await;
+        let mut store = self.store.write().await;
+
+        while last_applied < commit_index {
+            last_applied += 1;
+
+            if let Some(entry) = log.get(last_applied) {
+                let command = rmp_serde::from_slice::<KvCommand>(&entry.command[..])?;
+                store.apply(command);
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn run(&mut self) -> Result<(), std::io::Error> {
+        todo!();
     }
 }
 
@@ -47,6 +81,8 @@ impl RaftNode for LatticeRaftNode {
 
         let mut current_term = *self.current_term.read().await;
         let mut voted_for = self.voted_for.read().await.clone();
+        let last_term = self.log.read().await.last_term();
+        let last_log_index = self.log.read().await.last_index();
 
         if req.term > current_term {
             *self.current_term.write().await = req.term;
@@ -55,11 +91,11 @@ impl RaftNode for LatticeRaftNode {
             voted_for = None;
         }
 
-        let term_ok = req.term == current_term; // must be same term
+        let term_ok = req.term == current_term;
         let vote_ok = voted_for.is_none() || voted_for.as_ref() == Some(&req.candidate_id);
 
-        // TODO proper log comparison when added log entries
-        let log_ok = true;
+        let log_ok = req.last_log_term > last_term
+            || (req.last_log_term == last_term && req.last_log_index >= last_log_index);
 
         let granted = term_ok && vote_ok && log_ok;
 
@@ -79,7 +115,73 @@ impl RaftNode for LatticeRaftNode {
         &self,
         request: tonic::Request<AppendEntriesRequest>,
     ) -> Result<tonic::Response<AppendEntriesResponse>, tonic::Status> {
-        todo!()
+        let req = request.into_inner();
+
+        let mut current_term = *self.current_term.read().await;
+
+        // fail if remote term is lower than current term
+        if req.term < current_term {
+            return Ok(tonic::Response::new(AppendEntriesResponse {
+                term: current_term,
+                success: false,
+            }));
+        }
+
+        // if our term is outdated, update and turn into follower
+        if req.term > current_term {
+            current_term = req.term;
+            *self.voted_for.write().await = None;
+            *self.role.write().await = RaftNodeRole::Follower;
+        }
+
+        // reset election timer here
+
+        if req.prev_log_index > 0 {
+            match self.log.read().await.get(req.prev_log_index) {
+                None => {
+                    return Ok(tonic::Response::new(AppendEntriesResponse {
+                        term: current_term,
+                        success: false,
+                    }));
+                }
+                Some(entry) => {
+                    if entry.term != req.prev_log_term {
+                        return Ok(tonic::Response::new(AppendEntriesResponse {
+                            term: current_term,
+                            success: false,
+                        }));
+                    }
+                }
+            }
+        }
+
+        let mut next_index = req.prev_log_index + 1;
+        for new_entry in req.entries {
+            let mut log = self.log.write().await;
+            if let Some(existing_entry) = self.log.read().await.get(next_index) {
+                if existing_entry.term != new_entry.term {
+                    // delete old entry and everything that follows
+                    log.truncate(next_index);
+                    log.append(new_entry.term, new_entry.command);
+                }
+            } else {
+                log.append(new_entry.term, new_entry.command);
+            }
+            next_index += 1;
+        }
+
+        if req.leader_commit > *self.commit_index.read().await {
+            let last_new_entry_index = self.log.read().await.last_index();
+            *self.commit_index.write().await = min(req.leader_commit, last_new_entry_index);
+        }
+
+        match self.apply_commited_entries().await {
+            Ok(_) => Ok(tonic::Response::new(AppendEntriesResponse {
+                term: current_term,
+                success: true,
+            })),
+            Err(e) => Err(tonic::Status::new(tonic::Code::Aborted, e.to_string())),
+        }
     }
 
     async fn install_snapshot(

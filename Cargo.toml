@@ -8,6 +8,9 @@ tonic = "0.12"
 prost = "0.13"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 tokio-stream = "0.1"
+serde = { version = "1.0.228", features = ["derive"] }
+bincode = { version = "2.0.1", features = ["serde"] }
+rmp-serde = "1.3.0"
 
 [build-dependencies]
 tonic-build = "0.12"
