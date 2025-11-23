@@ -1,11 +1,13 @@
 use std::{collections::HashMap, string};
 
-#[derive(Clone)]
-pub struct LogEntry {
-    pub term: u64,
-    pub index: u64,
-    pub command: Vec<u8>,
-}
+use crate::raft::raft::LogEntry;
+
+// #[derive(Clone)]
+// pub struct LogEntry {
+//     pub term: u64,
+//     pub index: u64,
+//     pub command: Vec<u8>,
+// }
 
 pub trait Log {
     fn append(&mut self, term: u64, command: Vec<u8>) -> u64;
