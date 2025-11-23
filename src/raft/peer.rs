@@ -1,6 +1,6 @@
 use std::net::SocketAddr;
 
-use crate::raft::raft::raft_node_client::RaftNodeClient;
+use crate::raft::raft_proto::raft_node_client::RaftNodeClient;
 
 pub struct Peer {
     // index of the next log entry to send to tha/* t */ server

@@ -1,6 +1,6 @@
 use std::{collections::HashMap, string};
 
-use crate::raft::raft::LogEntry;
+use crate::raft::raft_proto::LogEntry;
 
 // #[derive(Clone)]
 // pub struct LogEntry {
