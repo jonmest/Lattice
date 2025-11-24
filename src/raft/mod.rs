@@ -1,6 +1,7 @@
 pub mod raft_proto {
     tonic::include_proto!("raft");
 }
+mod binary_log;
 pub mod log;
 pub mod node;
 pub mod peer;

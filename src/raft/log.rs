@@ -1,13 +1,9 @@
-use std::{collections::HashMap, string};
+use std::io;
 
-use crate::raft::raft_proto::LogEntry;
-
-// #[derive(Clone)]
-// pub struct LogEntry {
-//     pub term: u64,
-//     pub index: u64,
-//     pub command: Vec<u8>,
-// }
+use crate::raft::{
+    binary_log::{BinaryLog, BinaryLogEntry},
+    raft_proto::LogEntry,
+};
 
 pub trait Log {
     fn append(&mut self, term: u64, command: Vec<u8>) -> u64;
@@ -20,24 +16,38 @@ pub trait Log {
 
 pub struct LatticeLog {
     entries: Vec<LogEntry>,
+    binary_log: BinaryLog,
 }
 
 impl LatticeLog {
-    pub fn new(path: &str) -> Self {
-        Self {
-            entries: Vec::new(),
-        }
+    pub fn new(path: &str) -> io::Result<Self> {
+        let binary_log = BinaryLog::open(path)?;
+        let entries: Vec<LogEntry> = binary_log.read_all()?;
+
+        Ok(Self {
+            entries,
+            binary_log,
+        })
+    }
+
+    fn append_persisted_log(&mut self, entry: &LogEntry) -> io::Result<()> {
+        self.binary_log
+            .append_msgpack(&BinaryLogEntry::from_proto(entry))?;
+        self.binary_log.sync()?;
+        Ok(())
     }
 }
 
 impl Log for LatticeLog {
     fn append(&mut self, term: u64, command: Vec<u8>) -> u64 {
         let index = self.entries.len() as u64;
-        self.entries.push(LogEntry {
+        let entry = LogEntry {
             term,
             index,
             command,
-        });
+        };
+        self.append_persisted_log(&entry);
+        self.entries.push(entry);
         index
     }
 

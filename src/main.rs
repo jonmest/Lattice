@@ -19,7 +19,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let id: SocketAddr = "127.0.0.1:50051".parse().unwrap();
     let peers: HashMap<SocketAddr, Peer> = HashMap::new();
 
-    let log = Arc::new(RwLock::new(LatticeLog::new(path)));
+    let log = Arc::new(RwLock::new(LatticeLog::new(path)?));
     let store = Arc::new(RwLock::new(LatticeStore::new()));
     let raft_node = Arc::new(LatticeNode::new(id, peers, store, log));
     let raft_node_clone = raft_node.clone();
