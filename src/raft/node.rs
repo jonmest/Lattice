@@ -82,10 +82,13 @@ impl LatticeNode {
         let current_term = *self.current_term.read().await;
 
         for peer in peers.values() {
-            // if peer.next_index > log.last_index() {
-            //     continue;
-            // }
-            let to_send = log.entries_from(peer.next_index);
+            let to_send = {
+                if peer.next_index > log.last_index() {
+                    &[]
+                } else {
+                    log.entries_from(peer.next_index)
+                }
+            };
             let prev_log_item = &log.get(peer.next_index - 1);
             let prev_log_item = &prev_log_item.as_ref().unwrap();
 
