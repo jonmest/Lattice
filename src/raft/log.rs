@@ -6,7 +6,7 @@ use crate::raft::{
 };
 
 pub trait Log {
-    fn append(&mut self, term: u64, command: Vec<u8>) -> u64;
+    fn append(&mut self, term: u64, command: Vec<u8>) -> Result<u64, std::io::Error>;
     fn get(&self, index: u64) -> Option<LogEntry>;
     fn truncate(&mut self, from_index: u64);
     fn last_index(&self) -> u64;
@@ -39,16 +39,16 @@ impl LatticeLog {
 }
 
 impl Log for LatticeLog {
-    fn append(&mut self, term: u64, command: Vec<u8>) -> u64 {
+    fn append(&mut self, term: u64, command: Vec<u8>) -> Result<u64, std::io::Error> {
         let index = self.entries.len() as u64;
         let entry = LogEntry {
             term,
             index,
             command,
         };
-        self.append_persisted_log(&entry);
+        self.append_persisted_log(&entry)?;
         self.entries.push(entry);
-        index
+        Ok(index)
     }
 
     fn get(&self, index: u64) -> Option<LogEntry> {

@@ -249,10 +249,10 @@ impl LatticeNode {
                 if existing_entry.term != new_entry.term {
                     // delete old entry and everything that follows
                     log.truncate(next_index);
-                    log.append(new_entry.term, new_entry.command);
+                    log.append(new_entry.term, new_entry.command)?;
                 }
             } else {
-                log.append(new_entry.term, new_entry.command);
+                log.append(new_entry.term, new_entry.command)?;
             }
             next_index += 1;
         }

@@ -85,7 +85,7 @@ impl BinaryLog {
 
     pub fn append_raw(&mut self, record: &[u8]) -> io::Result<()> {
         let len = record.len();
-        assert!(len <= u32::max as usize);
+        assert!(len <= u32::MAX as usize);
 
         let len_bytes = (len as u32).to_le_bytes();
 
@@ -95,8 +95,7 @@ impl BinaryLog {
     }
 
     pub fn append_msgpack<T: Serialize>(&mut self, value: &T) -> io::Result<()> {
-        let buf = rmp_serde::to_vec_named(value)
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+        let buf = rmp_serde::to_vec_named(value).map_err(|e| io::Error::other(e.to_string()))?;
         self.append_raw(&buf)
     }
 
