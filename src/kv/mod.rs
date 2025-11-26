@@ -1,10 +1,15 @@
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    io::{self, Error, ErrorKind},
+};
 
+use rmp_serde::from_slice;
 use serde::{Deserialize, Serialize};
 
-pub mod kv {
+pub mod kv_proto {
     tonic::include_proto!("kv");
 }
+pub mod service;
 
 #[derive(Serialize, Deserialize)]
 pub enum KvCommand {
@@ -30,6 +35,14 @@ impl LatticeStore {
             map: HashMap::new(),
         }
     }
+
+    pub fn apply_command(&mut self, command: &[u8]) -> io::Result<ApplyResult> {
+        let command: KvCommand =
+            from_slice(command).map_err(|e| Error::new(ErrorKind::InvalidData, e.to_string()))?;
+
+        Ok(self.apply(command))
+    }
+
     pub fn apply(&mut self, command: KvCommand) -> ApplyResult {
         match command {
             KvCommand::Set { key, value } => ApplyResult::Set(self.set(key, value)),

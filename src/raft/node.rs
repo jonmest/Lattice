@@ -9,7 +9,7 @@ use crate::{
     kv::{KvCommand, LatticeStore},
     raft::{
         log::LatticeLog,
-        peer::{Peer, connect_to_node},
+        peer::Peer,
         raft_proto::{AppendEntriesRequest, VoteRequest, VoteResponse},
         state::RaftNodeRole,
     },
@@ -77,11 +77,11 @@ impl LatticeNode {
     }
 
     async fn run_leader_tick(&self) -> Result<(), Box<dyn std::error::Error>> {
-        let peers = self.peers.read().await;
+        let mut peers = self.peers.write().await;
         let log = self.log.read().await;
         let current_term = *self.current_term.read().await;
 
-        for peer in peers.values() {
+        for peer in peers.values_mut() {
             let to_send = {
                 if peer.next_index > log.last_index() {
                     &[]
@@ -92,22 +92,27 @@ impl LatticeNode {
             let prev_log_item = &log.get(peer.next_index - 1);
             let prev_log_item = &prev_log_item.as_ref().unwrap();
 
-            let req = tonic::Request::new(AppendEntriesRequest {
+            let req = AppendEntriesRequest {
                 term: current_term,
                 leader_id: self.id.read().await.to_string(),
                 prev_log_index: prev_log_item.index,
                 prev_log_term: prev_log_item.term,
                 leader_commit: *self.commit_index.read().await,
                 entries: to_send.to_vec(),
-            });
-            let mut client = connect_to_node(&peer.addr).await?;
-            let response = client.append_entries(req).await?.into_inner();
+            };
+            let response = peer.send_append_entries(req).await?;
             if !response.success {
                 self.peers
                     .write()
                     .await
-                    .entry(peer.addr)
+                    .entry(peer.address)
                     .and_modify(|p| p.next_index -= 1);
+            } else {
+                self.peers
+                    .write()
+                    .await
+                    .entry(peer.address)
+                    .and_modify(|p| p.match_index = response.cursor);
             }
         }
 
@@ -123,19 +128,17 @@ impl LatticeNode {
             let population: u64 = self.peers.read().await.len().try_into().unwrap();
             let majority_threshold = population.div_ceil(2);
             let mut votes = 0;
+
             // request election
-            for p in self.peers.read().await.values() {
-                let req = tonic::Request::new(VoteRequest {
+            for p in self.peers.write().await.values_mut() {
+                let req = VoteRequest {
                     term: *self.current_term.read().await,
                     last_log_index: self.log.read().await.last_index(),
                     last_log_term: self.log.read().await.last_term(),
                     candidate_id: self.id.read().await.to_string(),
-                });
+                };
 
-                // todo: eagerly setup connection earlier
-                let mut client = connect_to_node(&p.addr).await?;
-                let response = client.request_vote(req).await?;
-                let vote_response = response.into_inner();
+                let vote_response = p.send_vote_request(req).await?;
                 if vote_response.granted {
                     votes += 1;
                 }
@@ -208,6 +211,8 @@ impl LatticeNode {
             return Ok(AppendEntriesResponse {
                 term: current_term,
                 success: false,
+
+                cursor: *self.last_applied.read().await,
             });
         }
 
@@ -232,6 +237,7 @@ impl LatticeNode {
                     return Ok(AppendEntriesResponse {
                         term: current_term,
                         success: false,
+                        cursor: *self.last_applied.read().await,
                     });
                 }
                 Some(entry) => {
@@ -239,6 +245,7 @@ impl LatticeNode {
                         return Ok(AppendEntriesResponse {
                             term: current_term,
                             success: false,
+                            cursor: *self.last_applied.read().await,
                         });
                     }
                 }
@@ -269,6 +276,7 @@ impl LatticeNode {
             Ok(_) => Ok(AppendEntriesResponse {
                 term: current_term,
                 success: true,
+                cursor: *self.last_applied.read().await,
             }),
             Err(e) => Err(e.into()),
         }
