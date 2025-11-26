@@ -63,3 +63,43 @@ impl LatticeStore {
         self.map.remove(key)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_set_get_delete() {
+        let mut store = LatticeStore::new();
+
+        let key = b"k1".to_vec();
+        let val = b"v1".to_vec();
+
+        assert!(store.get(&key).is_none());
+
+        let prev = store.set(key.clone(), val.clone());
+        assert!(prev.is_none());
+        assert_eq!(store.get(&key).unwrap(), &val);
+
+        let removed = store.delete(&key);
+        assert_eq!(removed.unwrap(), val);
+        assert!(store.get(&key).is_none());
+    }
+
+    #[test]
+    fn test_apply_command_serialization() {
+        let mut store = LatticeStore::new();
+
+        let cmd = KvCommand::Set {
+            key: b"k2".to_vec(),
+            value: b"v2".to_vec(),
+        };
+
+        let bytes = rmp_serde::to_vec_named(&cmd).expect("serialize cmd");
+
+        match store.apply_command(&bytes).expect("apply cmd") {
+            ApplyResult::Set(Some(_)) | ApplyResult::Set(None) => {}
+            _ => panic!("unexpected apply result"),
+        }
+    }
+}

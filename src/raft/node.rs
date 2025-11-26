@@ -57,6 +57,93 @@ impl LatticeNode {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::raft::raft_proto::{VoteRequest, AppendEntriesRequest, LogEntry};
+    use tokio::sync::RwLock as TokioRwLock;
+    use std::collections::HashMap;
+
+    fn temp_path(name: &str) -> String {
+        let mut p = std::env::temp_dir();
+        p.push(format!("lattice_node_test_{}.bin", name));
+        p.to_string_lossy().into_owned()
+    }
+
+    #[tokio::test]
+    async fn test_handle_request_vote_grants() {
+        let addr: SocketAddr = "127.0.0.1:9001".parse().unwrap();
+        let peers: HashMap<SocketAddr, Peer> = HashMap::new();
+
+        let store = Arc::new(TokioRwLock::new(crate::kv::LatticeStore::new()));
+
+        let path = temp_path("vote");
+        let _ = std::fs::remove_file(&path);
+        let _ = crate::raft::binary_log::BinaryLog::open(&path).expect("open");
+        let log_obj = crate::raft::log::LatticeLog::new(&path).expect("create lattice log");
+        let log = Arc::new(TokioRwLock::new(log_obj));
+
+        let node = LatticeNode::new(addr, peers, store.clone(), log.clone());
+
+        let req = VoteRequest {
+            term: 1,
+            last_log_index: 0,
+            last_log_term: 0,
+            candidate_id: "candidate-1".to_string(),
+        };
+
+        let resp = node.handle_request_vote(req).await.expect("vote");
+        assert_eq!(resp.granted, true);
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn test_handle_append_entries_appends() {
+        let addr: SocketAddr = "127.0.0.1:9002".parse().unwrap();
+        let peers: HashMap<SocketAddr, Peer> = HashMap::new();
+
+        let store = Arc::new(TokioRwLock::new(crate::kv::LatticeStore::new()));
+
+        let path = temp_path("append");
+        let _ = std::fs::remove_file(&path);
+        let _ = crate::raft::binary_log::BinaryLog::open(&path).expect("open");
+        let log_inner = crate::raft::log::LatticeLog::new(&path).expect("create lattice log");
+        let log = Arc::new(TokioRwLock::new(log_inner));
+
+        let node = LatticeNode::new(addr, peers, store.clone(), log.clone());
+
+        // make a kv set command
+        let cmd = crate::kv::KvCommand::Set { key: b"kx".to_vec(), value: b"vx".to_vec() };
+        let cmd_bytes = rmp_serde::to_vec_named(&cmd).expect("serialize cmd");
+
+        let entry = LogEntry {
+            term: 1,
+            index: 0,
+            command: cmd_bytes.clone(),
+        };
+
+        let req = AppendEntriesRequest {
+            term: 1,
+            leader_id: addr.to_string(),
+            prev_log_index: 0,
+            prev_log_term: 0,
+            leader_commit: 1,
+            entries: vec![entry],
+        };
+
+        let resp = node.handle_append_entries_request(req).await.expect("append_entries");
+        assert!(resp.success);
+
+        // verify the log contains the appended command at index 0
+        let read_log = log.read().await;
+        let got = read_log.get(0).expect("get appended");
+        assert_eq!(got.command, cmd_bytes);
+
+        let _ = std::fs::remove_file(&path);
+    }
+}
+
 impl LatticeNode {
     async fn apply_commited_entries(&self) -> Result<(), rmp_serde::decode::Error> {
         let mut last_applied = *self.last_applied.write().await;

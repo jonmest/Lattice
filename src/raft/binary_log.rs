@@ -114,3 +114,43 @@ impl BinaryLog {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::raft::raft_proto::LogEntry;
+
+    fn temp_path(name: &str) -> String {
+        let mut p = std::env::temp_dir();
+        p.push(format!("lattice_test_{}.bin", name));
+        p.to_string_lossy().into_owned()
+    }
+
+    #[test]
+    fn test_append_and_read() {
+        let path = temp_path("append_read");
+
+        // ensure file doesn't exist from previous runs
+        let _ = std::fs::remove_file(&path);
+
+        let mut log = BinaryLog::open(&path).expect("open log");
+
+        let entry = BinaryLogEntry {
+            term: 7,
+            index: 42,
+            command: b"hello".to_vec(),
+        };
+
+        log.append_msgpack(&entry).expect("append");
+        log.sync().expect("sync");
+
+        let read = log.read_all().expect("read_all");
+        assert_eq!(read.len(), 1);
+        let proto: LogEntry = read[0].clone();
+        assert_eq!(proto.term, 7);
+        assert_eq!(proto.command, b"hello".to_vec());
+
+        // cleanup
+        let _ = std::fs::remove_file(&path);
+    }
+}

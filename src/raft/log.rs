@@ -71,3 +71,43 @@ impl Log for LatticeLog {
         &self.entries[start as usize..]
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    fn temp_path(name: &str) -> String {
+        let mut p = std::env::temp_dir();
+        p.push(format!("lattice_log_test_{}.bin", name));
+        p.to_string_lossy().into_owned()
+    }
+
+    #[test]
+    fn test_lattice_log_append_get_truncate() {
+        let path = temp_path("basic");
+        let _ = fs::remove_file(&path);
+
+        // create an empty binary log first
+        let _ = BinaryLog::open(&path).expect("open binlog");
+
+        let mut l = LatticeLog::new(&path).expect("create lattice log");
+
+        assert_eq!(l.last_index(), 0);
+        assert_eq!(l.last_term(), 0);
+
+        let idx = l.append(1, b"cmd1".to_vec()).expect("append");
+        assert_eq!(idx, 0);
+        assert_eq!(l.last_index(), 1);
+        assert_eq!(l.last_term(), 1);
+
+        let got = l.get(0).expect("get entry");
+        assert_eq!(got.term, 1);
+        assert_eq!(got.command, b"cmd1".to_vec());
+
+        l.truncate(0);
+        assert_eq!(l.last_index(), 0);
+
+        let _ = fs::remove_file(&path);
+    }
+}
