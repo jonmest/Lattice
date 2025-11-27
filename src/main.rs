@@ -7,8 +7,7 @@ use tokio::sync::RwLock;
 
 use crate::{
     kv::{
-        LatticeStore,
-        kv_proto::key_value_store_server::{KeyValueStore, KeyValueStoreServer},
+        LatticeStore, kv_proto::key_value_store_server::KeyValueStoreServer,
         service::KvStoreService,
     },
     raft::{
