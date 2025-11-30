@@ -152,9 +152,9 @@ impl LatticeNode {
     }
 
     async fn run_follower_tick(&self) -> Result<(), Box<dyn std::error::Error>> {
-        *self.timer.write().await = Instant::now();
         let duration = self.timer.read().await.elapsed();
         if duration > self.timeout {
+            *self.timer.write().await = Instant::now();
             *self.role.write().await = RaftNodeRole::Candidate;
 
             let mut current_term = self.current_term.write().await;
