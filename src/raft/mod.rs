@@ -53,7 +53,7 @@ impl RaftNode for LatticeRaftGrpcService {
 
     async fn install_snapshot(
         &self,
-        request: tonic::Request<InstallSnapshotChunk>,
+        _request: tonic::Request<InstallSnapshotChunk>,
     ) -> Result<tonic::Response<InstallSnapshotResponse>, tonic::Status> {
         todo!()
     }

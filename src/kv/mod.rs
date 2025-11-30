@@ -18,10 +18,10 @@ pub enum KvCommand {
     Get { key: Vec<u8> },
 }
 
-pub enum ApplyResult<'a> {
+pub enum ApplyResult {
     Set(Option<Vec<u8>>),
     Delete(Option<Vec<u8>>),
-    Get(Option<&'a Vec<u8>>),
+    Get(Option<Vec<u8>>),
 }
 
 #[derive(Default)]
@@ -47,7 +47,7 @@ impl LatticeStore {
         match command {
             KvCommand::Set { key, value } => ApplyResult::Set(self.set(key, value)),
             KvCommand::Delete { key } => ApplyResult::Delete(self.delete(&key)),
-            KvCommand::Get { key } => ApplyResult::Get(self.get(&key)),
+            KvCommand::Get { key } => ApplyResult::Get(self.get(&key).cloned()),
         }
     }
 
@@ -186,7 +186,7 @@ mod tests {
         };
 
         match store.apply(cmd) {
-            ApplyResult::Get(val) => assert_eq!(val.unwrap(), &b"v".to_vec()),
+            ApplyResult::Get(val) => assert_eq!(val.unwrap(), b"v".to_vec()),
             _ => panic!("unexpected result"),
         }
     }

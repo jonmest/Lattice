@@ -6,9 +6,7 @@ use crate::raft::raft_proto::{
 };
 
 pub struct Peer {
-    // index of the next log entry to send to tha/* t */ server
     pub next_index: u64,
-    //  index of highest log entry known to be replicated on server
     pub match_index: u64,
     pub address: SocketAddr,
     pub connection: RaftNodeClient<tonic::transport::Channel>,
@@ -46,11 +44,4 @@ impl Peer {
             .await?;
         Ok(response.into_inner())
     }
-}
-
-pub async fn connect_to_node(
-    address: &SocketAddr,
-) -> Result<RaftNodeClient<tonic::transport::Channel>, Box<dyn std::error::Error>> {
-    let client = RaftNodeClient::connect(address.to_string()).await?;
-    Ok(client)
 }

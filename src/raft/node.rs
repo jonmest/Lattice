@@ -165,8 +165,9 @@ impl LatticeNode {
             let candidate_id = self.id.read().await.to_string();
             *self.voted_for.write().await = Some(candidate_id.clone());
 
-            let last_log_index = self.log.read().await.last_index();
-            let last_log_term = self.log.read().await.last_term();
+            let log = self.log.read().await;
+            let last_log_index = log.last_index();
+            let last_log_term = log.last_term();
 
             let peers_count = self.peers.read().await.len();
             let population = peers_count + 1;
@@ -226,8 +227,9 @@ impl LatticeNode {
     ) -> Result<VoteResponse, Box<dyn std::error::Error>> {
         let mut current_term = *self.current_term.read().await;
         let mut voted_for = self.voted_for.read().await.clone();
-        let last_term = self.log.read().await.last_term();
-        let last_log_index = self.log.read().await.last_index();
+        let log = self.log.read().await;
+        let last_term = log.last_term();
+        let last_log_index = log.last_index();
 
         if vote_request.term > current_term {
             *self.current_term.write().await = vote_request.term;
