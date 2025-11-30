@@ -1,8 +1,8 @@
 use std::net::SocketAddr;
 
 use crate::raft::raft_proto::{
-    AppendEntriesRequest, AppendEntriesResponse, VoteRequest, VoteResponse,
-    raft_node_client::RaftNodeClient,
+    AppendEntriesRequest, AppendEntriesResponse, InstallSnapshotChunk,
+    InstallSnapshotResponse, VoteRequest, VoteResponse, raft_node_client::RaftNodeClient,
 };
 
 pub struct Peer {
@@ -41,6 +41,17 @@ impl Peer {
         let response = self
             .connection
             .append_entries(tonic::Request::new(req))
+            .await?;
+        Ok(response.into_inner())
+    }
+
+    pub async fn send_install_snapshot(
+        &mut self,
+        req: InstallSnapshotChunk,
+    ) -> std::result::Result<InstallSnapshotResponse, tonic::Status> {
+        let response = self
+            .connection
+            .install_snapshot(tonic::Request::new(req))
             .await?;
         Ok(response.into_inner())
     }

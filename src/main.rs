@@ -27,6 +27,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let store = Arc::new(RwLock::new(LatticeStore::new()));
 
     let raft_node = Arc::new(LatticeNode::new(id, peers, store.clone(), log, snapshot_path));
+
+    // Restore from snapshot if one exists
+    raft_node.restore_from_snapshot().await?;
+
     let raft_node_clone = raft_node.clone();
 
     let raft_loop = tokio::spawn(async move {

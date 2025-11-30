@@ -39,6 +39,9 @@ async fn test_single_node_kv_operations() {
 
     let raft_node = Arc::new(LatticeNode::new(id, peers, store.clone(), log, snapshot_path.clone()));
 
+    // Restore from snapshot if one exists
+    raft_node.restore_from_snapshot().await.unwrap();
+
     let raft_server_handle = {
         let raft_node = raft_node.clone();
         tokio::spawn(async move {
@@ -125,6 +128,9 @@ async fn test_two_node_cluster() {
         let log = Arc::new(RwLock::new(LatticeLog::new(&log_path).unwrap()));
         let store = Arc::new(RwLock::new(LatticeStore::new()));
         let raft_node = Arc::new(LatticeNode::new(id, peers, store.clone(), log, snapshot_path));
+
+        // Restore from snapshot if one exists
+        raft_node.restore_from_snapshot().await.unwrap();
 
         let raft_handle = {
             let raft_node = raft_node.clone();

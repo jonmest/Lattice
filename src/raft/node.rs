@@ -65,6 +65,17 @@ impl LatticeNode {
             snapshot_threshold: 1000,
         }
     }
+
+    pub async fn restore_from_snapshot(&self) -> std::io::Result<()> {
+        if let Some(snapshot) = Snapshot::load(&self.snapshot_path)? {
+            let restored_store = snapshot.restore_store()?;
+            *self.store.write().await = restored_store;
+            *self.snapshot_metadata.write().await = Some(snapshot.metadata.clone());
+            *self.commit_index.write().await = snapshot.metadata.last_included_index;
+            *self.last_applied.write().await = snapshot.metadata.last_included_index;
+        }
+        Ok(())
+    }
 }
 
 impl LatticeNode {
@@ -121,6 +132,47 @@ impl LatticeNode {
         let current_term = *self.current_term.read().await;
 
         for peer in peers.values_mut() {
+            // Check if we need to send a snapshot instead of AppendEntries
+            let needs_snapshot = if peer.next_index <= 1 {
+                false
+            } else {
+                log.get(peer.next_index - 1).is_none()
+            };
+
+            if needs_snapshot {
+                // The log entry the peer needs has been compacted, send snapshot
+                if let Some(snapshot_meta) = self.snapshot_metadata.read().await.as_ref() {
+                    use crate::raft::snapshot::Snapshot;
+
+                    // Load the snapshot from disk
+                    if let Ok(Some(snapshot)) = Snapshot::load(&self.snapshot_path) {
+                        let req = crate::raft::raft_proto::InstallSnapshotChunk {
+                            term: current_term,
+                            leader_id: self.id.read().await.to_string(),
+                            last_included_index: snapshot_meta.last_included_index,
+                            last_included_term: snapshot_meta.last_included_term,
+                            data: snapshot.data,
+                            offset: 0,
+                            done: true,
+                        };
+
+                        let response = peer.send_install_snapshot(req).await?;
+
+                        if response.term > current_term {
+                            *self.current_term.write().await = response.term;
+                            *self.voted_for.write().await = None;
+                            *self.role.write().await = RaftNodeRole::Follower;
+                            return Ok(());
+                        }
+
+                        // Update peer's indices after successful snapshot install
+                        peer.next_index = snapshot_meta.last_included_index + 1;
+                        peer.match_index = snapshot_meta.last_included_index;
+                    }
+                }
+                continue;
+            }
+
             let to_send = {
                 if peer.next_index > log.last_index() {
                     &[]
@@ -385,6 +437,73 @@ impl LatticeNode {
             }),
             Err(e) => Err(e.into()),
         }
+    }
+
+    pub async fn handle_install_snapshot(
+        &self,
+        request: crate::raft::raft_proto::InstallSnapshotChunk,
+    ) -> Result<crate::raft::raft_proto::InstallSnapshotResponse, Box<dyn std::error::Error>> {
+        use crate::raft::snapshot::{Snapshot, SnapshotMetadata};
+
+        let current_term = *self.current_term.read().await;
+
+        // Reply immediately if term < currentTerm
+        if request.term < current_term {
+            return Ok(crate::raft::raft_proto::InstallSnapshotResponse {
+                term: current_term,
+            });
+        }
+
+        // Update term if necessary
+        if request.term > current_term {
+            *self.current_term.write().await = request.term;
+            *self.voted_for.write().await = None;
+            *self.role.write().await = RaftNodeRole::Follower;
+        }
+
+        // Reset election timer
+        *self.timer.write().await = Instant::now();
+
+        // Update leader
+        if let Ok(leader_addr) = request.leader_id.parse() {
+            *self.leader.write().await = Some(leader_addr);
+        }
+
+        // For simplicity, we expect the entire snapshot in one chunk (done=true, offset=0)
+        if request.done && request.offset == 0 {
+            let snapshot_metadata = SnapshotMetadata {
+                last_included_index: request.last_included_index,
+                last_included_term: request.last_included_term,
+            };
+
+            // Create snapshot from the received data
+            let snapshot = Snapshot {
+                metadata: snapshot_metadata.clone(),
+                data: request.data,
+            };
+
+            // Save snapshot to disk
+            snapshot.save(&self.snapshot_path)?;
+
+            // Restore state from snapshot
+            let restored_store = snapshot.restore_store()?;
+            *self.store.write().await = restored_store;
+
+            // Update snapshot metadata
+            *self.snapshot_metadata.write().await = Some(snapshot_metadata.clone());
+
+            // Update commit_index and last_applied
+            *self.commit_index.write().await = snapshot_metadata.last_included_index;
+            *self.last_applied.write().await = snapshot_metadata.last_included_index;
+
+            // Truncate log entries covered by the snapshot
+            let mut log = self.log.write().await;
+            log.truncate(snapshot_metadata.last_included_index + 1);
+        }
+
+        Ok(crate::raft::raft_proto::InstallSnapshotResponse {
+            term: *self.current_term.read().await,
+        })
     }
 }
 
