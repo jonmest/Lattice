@@ -14,7 +14,7 @@ The codebase handles leader election, log replication, persistent storage, crash
 # Start a 3-node cluster
 cargo run --example cluster
 
-# Run all tests (27 unit + integration tests)
+# Run all tests (30 unit + integration tests)
 cargo test
 ```
 
@@ -79,11 +79,18 @@ This is one of those things that's three lines in the paper and like 20 lines of
 
 ```
 src/
-├── kv/              # state machine + gRPC service
+├── kv/
+│   ├── mod.rs       # state machine
+│   ├── service.rs   # gRPC service
+│   └── batch.rs     # operation batching
 ├── raft/
 │   ├── node.rs      # main Raft logic (elections, replication)
 │   ├── log.rs       # log abstraction with correct indexing
-│   └── binary_log.rs # persistent storage
+│   ├── binary_log.rs # persistent storage
+│   ├── snapshot.rs  # log compaction
+│   ├── config.rs    # dynamic membership
+│   ├── peer.rs      # peer communication
+│   └── state.rs     # node state
 examples/cluster.rs  # 3-node demo
 tests/               # integration tests
 ```
@@ -101,14 +108,24 @@ Running `cargo test` isn't performative—those tests actually caught issues dur
 - Tonic/gRPC for RPC (type-safe, versioned APIs)
 - MessagePack for serialization (compact, fast)
 
-## What's Not Here (Yet)
+## Features
 
-- Snapshotting (logs grow forever right now)
-- Dynamic membership (cluster membership is static at startup)
-- Optimized reads (everything goes through the leader)
-- Batching (one entry per RPC)
+### Core Raft
+- Leader election with randomized timeouts
+- Log replication with consistency guarantees
+- Persistent binary log with crash recovery
+- Commit index advancement with majority tracking
 
-These aren't hard technically, I just haven't gotten to them. The core consensus algorithm was the interesting part.
+### Advanced Features
+- **Snapshotting**: Automatic log compaction when log exceeds 1000 entries
+- **InstallSnapshot RPC**: Catch up followers that are too far behind
+- **Dynamic Membership**: Add/remove nodes from running cluster via AddServer/RemoveServer RPCs
+- **Operation Batching**: Group multiple operations into single Raft entry for improved throughput
+
+### Not Implemented
+- Optimized reads (lease-based reads to avoid log replication)
+- Pre-vote (prevent disruption from partitioned candidates)
+- Leadership transfer (graceful handoff during maintenance)
 
 ## What I Learned
 

@@ -1,0 +1,37 @@
+# Lattice Configuration File
+
+[raft]
+# Election timeout in milliseconds (randomized between this and 2x this value)
+election_timeout_ms = 2000
+
+# Heartbeat interval in milliseconds
+heartbeat_interval_ms = 200
+
+# Create snapshot after this many log entries
+snapshot_threshold = 1000
+
+[storage]
+# Path to the Raft log file
+log_path = "./log.db"
+
+# Path to snapshot file
+snapshot_path = "./snapshot.snap"
+
+[batching]
+# Maximum number of operations to batch together
+max_batch_size = 100
+
+# Maximum time to wait before flushing a batch (milliseconds)
+batch_timeout_ms = 10
+
+[observability]
+# Enable OpenTelemetry tracing
+enable_tracing = true
+
+# OTLP endpoint for sending traces
+# Set to null to disable OTLP export (will still log traces locally)
+# Example: "http://localhost:4317" for local Jaeger
+otlp_endpoint = null
+
+# Service name for tracing
+service_name = "lattice"

@@ -4,6 +4,7 @@ use tokio::{
     sync::RwLock,
     time::{Instant, sleep},
 };
+use tracing::{debug, info, instrument, warn};
 
 use crate::{
     kv::{KvCommand, LatticeStore},
@@ -357,6 +358,7 @@ impl LatticeNode {
         }
     }
 
+    #[instrument(skip(self, vote_request), fields(term = vote_request.term, candidate = %vote_request.candidate_id))]
     pub async fn handle_request_vote(
         &self,
         vote_request: VoteRequest,
@@ -398,6 +400,7 @@ impl LatticeNode {
         Ok(response)
     }
 
+    #[instrument(skip(self, request), fields(term = request.term, prev_index = request.prev_log_index, entries = request.entries.len()))]
     pub async fn handle_append_entries_request(
         &self,
         request: AppendEntriesRequest,
