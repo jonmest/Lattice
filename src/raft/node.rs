@@ -314,7 +314,6 @@ impl LatticeNode {
         for new_entry in request.entries {
             if let Some(existing_entry) = log.get(next_index) {
                 if existing_entry.term != new_entry.term {
-                    // delete old entry and everything that follows
                     log.truncate(next_index);
                     log.append(new_entry.term, new_entry.command)?;
                 }
@@ -324,8 +323,10 @@ impl LatticeNode {
             next_index += 1;
         }
 
+        let last_new_entry_index = log.last_index();
+        drop(log);
+
         if request.leader_commit > *self.commit_index.read().await {
-            let last_new_entry_index = self.log.read().await.last_index();
             *self.commit_index.write().await = min(request.leader_commit, last_new_entry_index);
         }
 

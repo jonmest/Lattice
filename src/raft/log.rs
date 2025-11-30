@@ -123,4 +123,145 @@ mod tests {
 
         let _ = fs::remove_file(&path);
     }
+
+    #[test]
+    fn test_get_with_invalid_index() {
+        let path = temp_path("invalid_index");
+        let _ = fs::remove_file(&path);
+
+        let _ = BinaryLog::open(&path).expect("open binlog");
+        let mut l = LatticeLog::new(&path).expect("create lattice log");
+
+        assert!(l.get(0).is_none());
+        assert!(l.get(1).is_none());
+
+        l.append(1, vec![1]).expect("append");
+        assert!(l.get(0).is_none());
+        assert!(l.get(1).is_some());
+        assert!(l.get(2).is_none());
+
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_entries_from() {
+        let path = temp_path("entries_from");
+        let _ = fs::remove_file(&path);
+
+        let _ = BinaryLog::open(&path).expect("open binlog");
+        let mut l = LatticeLog::new(&path).expect("create lattice log");
+
+        for i in 1..=5 {
+            l.append(i, vec![i as u8]).expect("append");
+        }
+
+        let all = l.entries_from(0);
+        assert_eq!(all.len(), 5);
+
+        let from_one = l.entries_from(1);
+        assert_eq!(from_one.len(), 5);
+        assert_eq!(from_one[0].index, 1);
+
+        let from_three = l.entries_from(3);
+        assert_eq!(from_three.len(), 3);
+        assert_eq!(from_three[0].index, 3);
+
+        let from_six = l.entries_from(6);
+        assert_eq!(from_six.len(), 0);
+
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_truncate_preserves_index() {
+        let path = temp_path("truncate_index");
+        let _ = fs::remove_file(&path);
+
+        let _ = BinaryLog::open(&path).expect("open binlog");
+        let mut l = LatticeLog::new(&path).expect("create lattice log");
+
+        for i in 1..=5 {
+            l.append(i, vec![i as u8]).expect("append");
+        }
+
+        l.truncate(3);
+        assert_eq!(l.last_index(), 2);
+        assert_eq!(l.last_term(), 2);
+
+        let idx = l.append(10, vec![99]).expect("append after truncate");
+        assert_eq!(idx, 3);
+        assert_eq!(l.last_index(), 3);
+        assert_eq!(l.last_term(), 10);
+
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_multiple_appends_with_different_terms() {
+        let path = temp_path("multi_term");
+        let _ = fs::remove_file(&path);
+
+        let _ = BinaryLog::open(&path).expect("open binlog");
+        let mut l = LatticeLog::new(&path).expect("create lattice log");
+
+        l.append(1, vec![1]).expect("append term 1");
+        l.append(1, vec![2]).expect("append term 1");
+        l.append(2, vec![3]).expect("append term 2");
+        l.append(2, vec![4]).expect("append term 2");
+        l.append(3, vec![5]).expect("append term 3");
+
+        assert_eq!(l.last_index(), 5);
+        assert_eq!(l.last_term(), 3);
+
+        assert_eq!(l.get(1).unwrap().term, 1);
+        assert_eq!(l.get(2).unwrap().term, 1);
+        assert_eq!(l.get(3).unwrap().term, 2);
+        assert_eq!(l.get(4).unwrap().term, 2);
+        assert_eq!(l.get(5).unwrap().term, 3);
+
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_truncate_persistence() {
+        let path = temp_path("truncate_persist");
+        let _ = fs::remove_file(&path);
+
+        {
+            let _ = BinaryLog::open(&path).expect("open binlog");
+            let mut l = LatticeLog::new(&path).expect("create lattice log");
+
+            for i in 1..=10 {
+                l.append(1, vec![i as u8]).expect("append");
+            }
+
+            l.truncate(5);
+            assert_eq!(l.last_index(), 4);
+        }
+
+        {
+            let l = LatticeLog::new(&path).expect("reopen log");
+            assert_eq!(l.last_index(), 4);
+            assert!(l.get(5).is_none());
+            assert!(l.get(4).is_some());
+        }
+
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_empty_log_properties() {
+        let path = temp_path("empty");
+        let _ = fs::remove_file(&path);
+
+        let _ = BinaryLog::open(&path).expect("open binlog");
+        let l = LatticeLog::new(&path).expect("create lattice log");
+
+        assert_eq!(l.last_index(), 0);
+        assert_eq!(l.last_term(), 0);
+        assert_eq!(l.entries_from(0).len(), 0);
+        assert_eq!(l.entries_from(1).len(), 0);
+
+        let _ = fs::remove_file(&path);
+    }
 }

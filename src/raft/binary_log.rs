@@ -173,7 +173,140 @@ mod tests {
         assert_eq!(proto.term, 7);
         assert_eq!(proto.command, b"hello".to_vec());
 
-        // cleanup
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_multiple_appends() {
+        let path = temp_path("multiple_appends");
+        let _ = std::fs::remove_file(&path);
+
+        let mut log = BinaryLog::open(&path).expect("open log");
+
+        for i in 0..10 {
+            let entry = BinaryLogEntry {
+                term: i,
+                index: i,
+                command: format!("cmd{}", i).into_bytes(),
+            };
+            log.append_msgpack(&entry).expect("append");
+        }
+        log.sync().expect("sync");
+
+        let entries = log.read_all().expect("read_all");
+        assert_eq!(entries.len(), 10);
+        for i in 0..10 {
+            assert_eq!(entries[i as usize].term, i);
+            assert_eq!(entries[i as usize].index, i);
+            assert_eq!(entries[i as usize].command, format!("cmd{}", i).into_bytes());
+        }
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_truncate_empty_log() {
+        let path = temp_path("truncate_empty");
+        let _ = std::fs::remove_file(&path);
+
+        let mut log = BinaryLog::open(&path).expect("open log");
+        log.truncate(0).expect("truncate");
+
+        let entries = log.read_all().expect("read_all");
+        assert_eq!(entries.len(), 0);
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_truncate_partial() {
+        let path = temp_path("truncate_partial");
+        let _ = std::fs::remove_file(&path);
+
+        let mut log = BinaryLog::open(&path).expect("open log");
+
+        for i in 0..10 {
+            let entry = BinaryLogEntry {
+                term: i,
+                index: i,
+                command: format!("cmd{}", i).into_bytes(),
+            };
+            log.append_msgpack(&entry).expect("append");
+        }
+        log.sync().expect("sync");
+
+        log.truncate(5).expect("truncate to 5");
+
+        let entries = log.read_all().expect("read_all");
+        assert_eq!(entries.len(), 5);
+        for i in 0..5 {
+            assert_eq!(entries[i as usize].term, i);
+        }
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_truncate_then_append() {
+        let path = temp_path("truncate_append");
+        let _ = std::fs::remove_file(&path);
+
+        let mut log = BinaryLog::open(&path).expect("open log");
+
+        for i in 0..5 {
+            let entry = BinaryLogEntry {
+                term: i,
+                index: i,
+                command: vec![i as u8],
+            };
+            log.append_msgpack(&entry).expect("append");
+        }
+        log.sync().expect("sync");
+
+        log.truncate(3).expect("truncate");
+
+        let entry = BinaryLogEntry {
+            term: 99,
+            index: 3,
+            command: vec![99],
+        };
+        log.append_msgpack(&entry).expect("append after truncate");
+        log.sync().expect("sync");
+
+        let entries = log.read_all().expect("read_all");
+        assert_eq!(entries.len(), 4);
+        assert_eq!(entries[3].term, 99);
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_persistence_across_reopens() {
+        let path = temp_path("persistence");
+        let _ = std::fs::remove_file(&path);
+
+        {
+            let mut log = BinaryLog::open(&path).expect("open log");
+            for i in 0..3 {
+                let entry = BinaryLogEntry {
+                    term: i,
+                    index: i,
+                    command: vec![i as u8],
+                };
+                log.append_msgpack(&entry).expect("append");
+            }
+            log.sync().expect("sync");
+        }
+
+        {
+            let log = BinaryLog::open(&path).expect("reopen log");
+            let entries = log.read_all().expect("read_all");
+            assert_eq!(entries.len(), 3);
+            for i in 0..3 {
+                assert_eq!(entries[i as usize].term, i);
+            }
+        }
+
         let _ = std::fs::remove_file(&path);
     }
 }
