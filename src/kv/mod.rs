@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 pub mod kv_proto {
     tonic::include_proto!("kv");
 }
+pub mod batch;
 pub mod service;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -16,12 +17,14 @@ pub enum KvCommand {
     Set { key: Vec<u8>, value: Vec<u8> },
     Delete { key: Vec<u8> },
     Get { key: Vec<u8> },
+    Batch { commands: Vec<KvCommand> },
 }
 
 pub enum ApplyResult {
     Set(Option<Vec<u8>>),
     Delete(Option<Vec<u8>>),
     Get(Option<Vec<u8>>),
+    Batch(Vec<ApplyResult>),
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -48,6 +51,10 @@ impl LatticeStore {
             KvCommand::Set { key, value } => ApplyResult::Set(self.set(key, value)),
             KvCommand::Delete { key } => ApplyResult::Delete(self.delete(&key)),
             KvCommand::Get { key } => ApplyResult::Get(self.get(&key).cloned()),
+            KvCommand::Batch { commands } => {
+                let results = commands.into_iter().map(|cmd| self.apply(cmd)).collect();
+                ApplyResult::Batch(results)
+            }
         }
     }
 
