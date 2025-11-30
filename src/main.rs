@@ -19,13 +19,14 @@ use crate::{
 #[tokio::main(flavor = "multi_thread", worker_threads = 10)]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let path = "./log.db";
+    let snapshot_path = "./snapshot.snap".to_string();
     let id: SocketAddr = "127.0.0.1:50051".parse().unwrap();
     let peers: HashMap<SocketAddr, Peer> = HashMap::new();
 
     let log = Arc::new(RwLock::new(LatticeLog::new(path)?));
     let store = Arc::new(RwLock::new(LatticeStore::new()));
 
-    let raft_node = Arc::new(LatticeNode::new(id, peers, store.clone(), log));
+    let raft_node = Arc::new(LatticeNode::new(id, peers, store.clone(), log, snapshot_path));
     let raft_node_clone = raft_node.clone();
 
     let raft_loop = tokio::spawn(async move {

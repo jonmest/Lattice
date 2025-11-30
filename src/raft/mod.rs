@@ -5,6 +5,7 @@ mod binary_log;
 pub mod log;
 pub mod node;
 pub mod peer;
+pub mod snapshot;
 pub mod state;
 use std::sync::Arc;
 

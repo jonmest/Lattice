@@ -24,8 +24,10 @@ use lattice::{
 async fn test_single_node_kv_operations() {
     let test_id = "single_node";
     let log_path = format!("./test_data/{}.db", test_id);
+    let snapshot_path = format!("./test_data/{}.snap", test_id);
     std::fs::create_dir_all("./test_data").ok();
     let _ = std::fs::remove_file(&log_path);
+    let _ = std::fs::remove_file(&snapshot_path);
 
     let id: SocketAddr = "127.0.0.1:60051".parse().unwrap();
     let raft_addr = "[::1]:60051".parse().unwrap();
@@ -35,7 +37,7 @@ async fn test_single_node_kv_operations() {
     let log = Arc::new(RwLock::new(LatticeLog::new(&log_path).unwrap()));
     let store = Arc::new(RwLock::new(LatticeStore::new()));
 
-    let raft_node = Arc::new(LatticeNode::new(id, peers, store.clone(), log));
+    let raft_node = Arc::new(LatticeNode::new(id, peers, store.clone(), log, snapshot_path.clone()));
 
     let raft_server_handle = {
         let raft_node = raft_node.clone();
@@ -85,6 +87,7 @@ async fn test_single_node_kv_operations() {
     kv_server_handle.abort();
 
     std::fs::remove_file(&log_path).ok();
+    std::fs::remove_file(&snapshot_path).ok();
 }
 
 #[tokio::test]
@@ -94,8 +97,12 @@ async fn test_two_node_cluster() {
 
     let node1_log = format!("./test_data/{}_node1.db", test_id);
     let node2_log = format!("./test_data/{}_node2.db", test_id);
+    let node1_snap = format!("./test_data/{}_node1.snap", test_id);
+    let node2_snap = format!("./test_data/{}_node2.snap", test_id);
     let _ = std::fs::remove_file(&node1_log);
     let _ = std::fs::remove_file(&node2_log);
+    let _ = std::fs::remove_file(&node1_snap);
+    let _ = std::fs::remove_file(&node2_snap);
 
     let node1_id: SocketAddr = "127.0.0.1:61051".parse().unwrap();
     let node1_raft_addr = "[::1]:61051".parse().unwrap();
@@ -106,7 +113,7 @@ async fn test_two_node_cluster() {
     let node2_kv_addr = "[::1]:61152".parse().unwrap();
 
     let start_node = |id: SocketAddr, raft_addr: SocketAddr, kv_addr: SocketAddr,
-                      log_path: String, peer_addr: Option<SocketAddr>| async move {
+                      log_path: String, snapshot_path: String, peer_addr: Option<SocketAddr>| async move {
         let mut peers = HashMap::new();
         if let Some(peer) = peer_addr {
             tokio::time::sleep(Duration::from_millis(200)).await;
@@ -117,7 +124,7 @@ async fn test_two_node_cluster() {
 
         let log = Arc::new(RwLock::new(LatticeLog::new(&log_path).unwrap()));
         let store = Arc::new(RwLock::new(LatticeStore::new()));
-        let raft_node = Arc::new(LatticeNode::new(id, peers, store.clone(), log));
+        let raft_node = Arc::new(LatticeNode::new(id, peers, store.clone(), log, snapshot_path));
 
         let raft_handle = {
             let raft_node = raft_node.clone();
@@ -144,13 +151,13 @@ async fn test_two_node_cluster() {
     };
 
     let (node1_raft, node1_kv) = start_node(
-        node1_id, node1_raft_addr, node1_kv_addr, node1_log.clone(), None
+        node1_id, node1_raft_addr, node1_kv_addr, node1_log.clone(), node1_snap.clone(), None
     ).await;
 
     tokio::time::sleep(Duration::from_millis(300)).await;
 
     let (node2_raft, node2_kv) = start_node(
-        node2_id, node2_raft_addr, node2_kv_addr, node2_log.clone(), Some(node1_raft_addr)
+        node2_id, node2_raft_addr, node2_kv_addr, node2_log.clone(), node2_snap.clone(), Some(node1_raft_addr)
     ).await;
 
     tokio::time::sleep(Duration::from_secs(1)).await;
@@ -185,4 +192,6 @@ async fn test_two_node_cluster() {
 
     std::fs::remove_file(&node1_log).ok();
     std::fs::remove_file(&node2_log).ok();
+    std::fs::remove_file(&node1_snap).ok();
+    std::fs::remove_file(&node2_snap).ok();
 }

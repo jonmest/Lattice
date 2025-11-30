@@ -24,7 +24,7 @@ pub enum ApplyResult {
     Get(Option<Vec<u8>>),
 }
 
-#[derive(Default)]
+#[derive(Default, Serialize, Deserialize)]
 pub struct LatticeStore {
     map: HashMap<Vec<u8>, Vec<u8>>,
 }

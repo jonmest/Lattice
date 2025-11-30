@@ -11,6 +11,7 @@ use crate::{
         log::LatticeLog,
         peer::Peer,
         raft_proto::{AppendEntriesRequest, VoteRequest, VoteResponse},
+        snapshot::{Snapshot, SnapshotMetadata},
         state::RaftNodeRole,
     },
 };
@@ -31,6 +32,11 @@ pub struct LatticeNode {
 
     peers: RwLock<HashMap<SocketAddr, Peer>>,
     leader: RwLock<Option<SocketAddr>>,
+
+    // Snapshot
+    snapshot_path: String,
+    snapshot_metadata: RwLock<Option<SnapshotMetadata>>,
+    snapshot_threshold: usize,
 }
 
 impl LatticeNode {
@@ -39,6 +45,7 @@ impl LatticeNode {
         peers: HashMap<SocketAddr, Peer>,
         store: Arc<RwLock<LatticeStore>>,
         log: Arc<RwLock<LatticeLog>>,
+        snapshot_path: String,
     ) -> LatticeNode {
         Self {
             id: RwLock::new(id),
@@ -53,6 +60,9 @@ impl LatticeNode {
             role: RwLock::new(RaftNodeRole::Follower),
             peers: RwLock::new(peers),
             leader: RwLock::new(None),
+            snapshot_path,
+            snapshot_metadata: RwLock::new(None),
+            snapshot_threshold: 1000,
         }
     }
 }
@@ -71,6 +81,37 @@ impl LatticeNode {
                 let _ = self.store.write().await.apply(command);
             }
         }
+        Ok(())
+    }
+
+    async fn maybe_create_snapshot(&self) -> Result<(), Box<dyn std::error::Error>> {
+        let log_size = self.log.read().await.last_index() as usize;
+
+        if log_size < self.snapshot_threshold {
+            return Ok(());
+        }
+
+        let last_applied = *self.last_applied.read().await;
+        if last_applied == 0 {
+            return Ok(());
+        }
+
+        let last_applied_entry = self.log.read().await.get(last_applied);
+        if last_applied_entry.is_none() {
+            return Ok(());
+        }
+
+        let entry = last_applied_entry.unwrap();
+        let store = self.store.read().await;
+
+        let snapshot = Snapshot::new(last_applied, entry.term, &store)?;
+        snapshot.save(&self.snapshot_path)?;
+
+        *self.snapshot_metadata.write().await = Some(snapshot.metadata.clone());
+
+        let mut log = self.log.write().await;
+        log.truncate(last_applied + 1);
+
         Ok(())
     }
 
@@ -217,6 +258,10 @@ impl LatticeNode {
                 RaftNodeRole::Leader => self.run_leader_tick().await?,
                 _ => self.run_follower_tick().await?,
             };
+
+            self.apply_commited_entries().await?;
+            let _ = self.maybe_create_snapshot().await;
+
             sleep(Duration::from_millis(200)).await;
         }
     }
@@ -369,7 +414,8 @@ mod tests {
         let log_obj = crate::raft::log::LatticeLog::new(&path).expect("create lattice log");
         let log = Arc::new(TokioRwLock::new(log_obj));
 
-        let node = LatticeNode::new(addr, peers, store.clone(), log.clone());
+        let snapshot_path = temp_path("vote_snapshot");
+        let node = LatticeNode::new(addr, peers, store.clone(), log.clone(), snapshot_path);
 
         let req = VoteRequest {
             term: 1,
@@ -397,7 +443,8 @@ mod tests {
         let log_inner = crate::raft::log::LatticeLog::new(&path).expect("create lattice log");
         let log = Arc::new(TokioRwLock::new(log_inner));
 
-        let node = LatticeNode::new(addr, peers, store.clone(), log.clone());
+        let snapshot_path = temp_path("append_snapshot");
+        let node = LatticeNode::new(addr, peers, store.clone(), log.clone(), snapshot_path);
 
         // make a kv set command
         let cmd = crate::kv::KvCommand::Set {

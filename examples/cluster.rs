@@ -34,6 +34,7 @@ async fn start_node(
     peer_addrs: Vec<SocketAddr>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let log_path = format!("./data/node_{}.db", raft_addr.port());
+    let snapshot_path = format!("./data/node_{}.snap", raft_addr.port());
     std::fs::create_dir_all("./data").ok();
 
     let mut peers = HashMap::new();
@@ -54,7 +55,7 @@ async fn start_node(
     let log = Arc::new(RwLock::new(LatticeLog::new(&log_path)?));
     let store = Arc::new(RwLock::new(LatticeStore::new()));
 
-    let raft_node = Arc::new(LatticeNode::new(id, peers, store.clone(), log));
+    let raft_node = Arc::new(LatticeNode::new(id, peers, store.clone(), log, snapshot_path));
     let raft_node_clone = raft_node.clone();
 
     let raft_loop = tokio::spawn(async move {
