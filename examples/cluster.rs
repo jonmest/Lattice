@@ -68,6 +68,8 @@ async fn start_node(
     raft_node.restore_from_snapshot().await?;
 
     let raft_node_clone = raft_node.clone();
+    let raft_node_server = raft_node.clone();
+    let signal_node = raft_node.clone();
 
     let raft_loop = tokio::spawn(async move {
         println!("[Node {}] Starting Raft loop", id);
@@ -77,7 +79,7 @@ async fn start_node(
     });
 
     let raft_server = tokio::spawn(async move {
-        let service = LatticeRaftGrpcService::new(raft_node.clone());
+        let service = LatticeRaftGrpcService::new(raft_node_server.clone());
         println!("[Node {}] Raft server listening on {}", id, raft_addr);
 
         tonic::transport::Server::builder()
@@ -98,7 +100,29 @@ async fn start_node(
             .unwrap();
     });
 
-    tokio::try_join!(raft_loop, raft_server, kv_service)?;
+    // Handle shutdown signals
+    let signal_handler = tokio::spawn(async move {
+        let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("Failed to install SIGTERM handler");
+        let mut sigint = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())
+            .expect("Failed to install SIGINT handler");
+
+        tokio::select! {
+            _ = sigterm.recv() => println!("[Node {}] Received SIGTERM", id),
+            _ = sigint.recv() => println!("[Node {}] Received SIGINT", id),
+        }
+
+        println!("[Node {}] Initiating graceful shutdown...", id);
+        if let Err(e) = signal_node.graceful_shutdown().await {
+            eprintln!("[Node {}] Error during graceful shutdown: {}", id, e);
+        }
+    });
+
+    tokio::select! {
+        result = tokio::try_join!(raft_loop, raft_server, kv_service) => result?,
+        _ = signal_handler => {},
+    }
+
     Ok(())
 }
 

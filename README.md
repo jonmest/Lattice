@@ -6,7 +6,7 @@ Distributed key-value store implementing Raft consensus from scratch in Rust. I 
 
 It's a working implementation of the Raft algorithm with persistent storage and a gRPC-based KV API. You can run a cluster, write values, kill nodes, bring them back up, and watch the system stay consistent. The kind of stuff that sounds simple until you try to build it.
 
-The codebase handles leader election, log replication, persistent storage, crash recovery, and all the weird edge cases that make distributed systems actually hard. No shortcuts using existing Raft libraries—I wanted to feel the pain of getting the details right.
+The codebase handles leader election, log replication, persistent storage, crash recovery, and all the weird edge cases that make distributed systems actually hard. No shortcuts using existing Raft libraries-I wanted to feel the pain of getting the details right.
 
 ## Running It
 
@@ -59,7 +59,7 @@ Fixed it by being very explicit about when locks get dropped. If you see a `drop
 
 ### Off-by-One Errors on Steroids
 
-Raft uses 1-based log indices where 0 means "no entry." Rust obviously uses 0-based arrays. Mixing these up doesn't cause a crash—it silently corrupts your distributed state across multiple machines, and you won't notice until way later.
+Raft uses 1-based log indices where 0 means "no entry." Rust obviously uses 0-based arrays. Mixing these up doesn't cause a crash-it silently corrupts your distributed state across multiple machines, and you won't notice until way later.
 
 Solution was to make all log access go through functions that handle the conversion, so you literally cannot get the indexing wrong by accident.
 
@@ -99,7 +99,7 @@ tests/               # integration tests
 
 All the major components have unit tests. Integration tests spin up actual multi-node clusters and verify operations work end-to-end. The tests found real bugs (deadlocks, wrong state transitions, indexing errors).
 
-Running `cargo test` isn't performative—those tests actually caught issues during development.
+Running `cargo test` isn't performative-those tests actually caught issues during development.
 
 ## Tech Stack
 
@@ -129,7 +129,7 @@ Running `cargo test` isn't performative—those tests actually caught issues dur
 
 ## What I Learned
 
-Testing distributed systems is fundamentally different than testing normal code. You need to test timing, crashes, partial failures. Unit tests aren't enough—you need integration tests that actually spawn multiple processes and make them talk to each other.
+Testing distributed systems is fundamentally different than testing normal code. You need to test timing, crashes, partial failures. Unit tests aren't enough-you need integration tests that actually spawn multiple processes and make them talk to each other.
 
 Lock-free programming is a meme. Locks are fine. Just don't hold them while doing async operations, and release them as soon as possible. The borrow checker will tell you when you're doing something stupid.
 

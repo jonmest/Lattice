@@ -101,6 +101,39 @@ impl LatticeNode {
         *self.lease_expiration.write().await = Some(new_expiration);
         debug!("Lease renewed until {:?}", new_expiration);
     }
+
+    /// Attempt graceful shutdown by transferring leadership if we're the leader
+    pub async fn graceful_shutdown(&self) -> Result<(), Box<dyn std::error::Error>> {
+        if matches!(*self.role.read().await, RaftNodeRole::Leader) {
+            info!("Graceful shutdown: attempting leadership transfer");
+
+            // Find a suitable target (first peer in the list)
+            let peers = self.peers.read().await;
+            if let Some((target_addr, _)) = peers.iter().next() {
+                let target = target_addr.to_string();
+                drop(peers);
+
+                let request = crate::raft::raft_proto::TransferLeadershipRequest {
+                    target_id: target.clone(),
+                };
+
+                match self.handle_transfer_leadership(request).await {
+                    Ok(response) if response.success => {
+                        info!("Successfully transferred leadership to {} before shutdown", target);
+                    }
+                    Ok(response) => {
+                        warn!("Failed to transfer leadership: {}", response.message);
+                    }
+                    Err(e) => {
+                        warn!("Error during leadership transfer: {}", e);
+                    }
+                }
+            } else {
+                info!("No peers available for leadership transfer");
+            }
+        }
+        Ok(())
+    }
 }
 
 impl LatticeNode {
