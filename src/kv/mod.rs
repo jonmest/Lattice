@@ -102,4 +102,110 @@ mod tests {
             _ => panic!("unexpected apply result"),
         }
     }
+
+    #[test]
+    fn test_overwrite_key() {
+        let mut store = LatticeStore::new();
+        let key = b"key".to_vec();
+
+        let prev1 = store.set(key.clone(), b"v1".to_vec());
+        assert!(prev1.is_none());
+
+        let prev2 = store.set(key.clone(), b"v2".to_vec());
+        assert_eq!(prev2.unwrap(), b"v1".to_vec());
+
+        assert_eq!(store.get(&key).unwrap(), &b"v2".to_vec());
+    }
+
+    #[test]
+    fn test_delete_nonexistent() {
+        let mut store = LatticeStore::new();
+        let key = b"missing".to_vec();
+
+        let result = store.delete(&key);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_multiple_keys() {
+        let mut store = LatticeStore::new();
+
+        for i in 0..10 {
+            let key = format!("k{}", i).into_bytes();
+            let val = format!("v{}", i).into_bytes();
+            store.set(key, val);
+        }
+
+        for i in 0..10 {
+            let key = format!("k{}", i).into_bytes();
+            let val = format!("v{}", i).into_bytes();
+            assert_eq!(store.get(&key).unwrap(), &val);
+        }
+    }
+
+    #[test]
+    fn test_apply_set_command() {
+        let mut store = LatticeStore::new();
+        let cmd = KvCommand::Set {
+            key: b"k".to_vec(),
+            value: b"v".to_vec(),
+        };
+
+        match store.apply(cmd) {
+            ApplyResult::Set(prev) => assert!(prev.is_none()),
+            _ => panic!("unexpected result"),
+        }
+
+        assert_eq!(store.get(&b"k".to_vec()).unwrap(), b"v");
+    }
+
+    #[test]
+    fn test_apply_delete_command() {
+        let mut store = LatticeStore::new();
+        store.set(b"k".to_vec(), b"v".to_vec());
+
+        let cmd = KvCommand::Delete {
+            key: b"k".to_vec(),
+        };
+
+        match store.apply(cmd) {
+            ApplyResult::Delete(prev) => assert_eq!(prev.unwrap(), b"v".to_vec()),
+            _ => panic!("unexpected result"),
+        }
+
+        assert!(store.get(&b"k".to_vec()).is_none());
+    }
+
+    #[test]
+    fn test_apply_get_command() {
+        let mut store = LatticeStore::new();
+        store.set(b"k".to_vec(), b"v".to_vec());
+
+        let cmd = KvCommand::Get {
+            key: b"k".to_vec(),
+        };
+
+        match store.apply(cmd) {
+            ApplyResult::Get(val) => assert_eq!(val.unwrap(), &b"v".to_vec()),
+            _ => panic!("unexpected result"),
+        }
+    }
+
+    #[test]
+    fn test_empty_store() {
+        let store = LatticeStore::new();
+        assert!(store.get(&b"any".to_vec()).is_none());
+    }
+
+    #[test]
+    fn test_set_then_delete_then_set() {
+        let mut store = LatticeStore::new();
+        let key = b"k".to_vec();
+
+        store.set(key.clone(), b"v1".to_vec());
+        store.delete(&key);
+        store.set(key.clone(), b"v2".to_vec());
+
+        assert_eq!(store.get(&key).unwrap(), &b"v2".to_vec());
+    }
 }
