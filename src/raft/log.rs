@@ -59,11 +59,14 @@ impl Log for LatticeLog {
     }
 
     fn truncate(&mut self, from_index: u64) {
-        if from_index == 0 {
-            self.entries.clear();
+        let keep_count = if from_index == 0 {
+            0
         } else {
-            self.entries.truncate((from_index - 1) as usize);
-        }
+            (from_index - 1) as usize
+        };
+
+        self.entries.truncate(keep_count);
+        let _ = self.binary_log.truncate(keep_count);
     }
 
     fn last_index(&self) -> u64 {

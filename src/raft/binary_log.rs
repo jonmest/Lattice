@@ -1,5 +1,6 @@
 use std::fs::{File, OpenOptions};
 use std::io::{self, BufWriter, Write};
+use std::mem;
 
 use serde::{Deserialize, Serialize};
 
@@ -112,6 +113,28 @@ impl BinaryLog {
                 .collect::<Vec<LogEntry>>()),
             Err(e) => Err(e),
         }
+    }
+
+    pub fn truncate(&mut self, keep_count: usize) -> io::Result<()> {
+        let entries = read_all::<BinaryLogEntry>(&self.path)?;
+        let to_keep = &entries[..keep_count.min(entries.len())];
+
+        self.writer.flush()?;
+
+        let file = OpenOptions::new()
+            .write(true)
+            .truncate(true)
+            .create(true)
+            .open(&self.path)?;
+        let new_writer = BufWriter::new(file);
+        let _ = mem::replace(&mut self.writer, new_writer);
+
+        for entry in to_keep {
+            self.append_msgpack(entry)?;
+        }
+        self.sync()?;
+
+        Ok(())
     }
 }
 
