@@ -85,7 +85,7 @@ impl KeyValueStore for KvStoreService {
         let command = KvCommand::Delete { key: body.key };
 
         match self.store.write().await.apply(command) {
-            ApplyResult::Set(_) => Ok(tonic::Response::new(DeleteResponse { ok: true })),
+            ApplyResult::Delete(_) => Ok(tonic::Response::new(DeleteResponse { ok: true })),
             _ => Err(tonic::Status::unknown("message")),
         }
     }
