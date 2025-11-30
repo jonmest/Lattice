@@ -287,12 +287,10 @@ impl LatticeNode {
             *self.role.write().await = RaftNodeRole::Follower;
             current_term = request.term;
         }
-        *self.leader.write().await = Some(
-            request
-                .leader_id
-                .parse()
-                .expect("Unable to parse peer address"),
-        );
+
+        if let Ok(leader_addr) = request.leader_id.parse() {
+            *self.leader.write().await = Some(leader_addr);
+        }
 
         *self.timer.write().await = Instant::now();
 
