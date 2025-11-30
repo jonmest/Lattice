@@ -68,8 +68,7 @@ impl LatticeNode {
             let entry = self.log.read().await.get(*last_applied_guard);
             if let Some(entry) = entry {
                 let command = rmp_serde::from_slice::<KvCommand>(&entry.command[..])?;
-
-                &self.store.write().await.apply(command);
+                let _ = self.store.write().await.apply(command);
             }
         }
         Ok(())
