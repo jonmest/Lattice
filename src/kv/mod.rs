@@ -11,7 +11,7 @@ pub mod kv_proto {
 }
 pub mod service;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub enum KvCommand {
     Set { key: Vec<u8>, value: Vec<u8> },
     Delete { key: Vec<u8> },

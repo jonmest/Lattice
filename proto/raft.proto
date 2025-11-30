@@ -5,6 +5,8 @@ service RaftNode {
   rpc RequestVote(VoteRequest) returns (VoteResponse);
   rpc AppendEntries(AppendEntriesRequest) returns (AppendEntriesResponse);
   rpc InstallSnapshot(InstallSnapshotChunk) returns (InstallSnapshotResponse);
+  rpc AddServer(AddServerRequest) returns (AddServerResponse);
+  rpc RemoveServer(RemoveServerRequest) returns (RemoveServerResponse);
 }
 
 message LogEntry {
@@ -55,4 +57,22 @@ message InstallSnapshotChunk {
   bool done = 7;
 }
 
+message AddServerRequest {
+  string server_id = 1;
+  string server_address = 2;
+}
+
+message AddServerResponse {
+  bool success = 1;
+  string leader_hint = 2;
+}
+
+message RemoveServerRequest {
+  string server_id = 1;
+}
+
+message RemoveServerResponse {
+  bool success = 1;
+  string leader_hint = 2;
+}
 

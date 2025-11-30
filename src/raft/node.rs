@@ -8,6 +8,7 @@ use tokio::{
 use crate::{
     kv::{KvCommand, LatticeStore},
     raft::{
+        config::ConfigChange,
         log::LatticeLog,
         peer::Peer,
         raft_proto::{AppendEntriesRequest, VoteRequest, VoteResponse},
@@ -80,19 +81,57 @@ impl LatticeNode {
 
 impl LatticeNode {
     pub async fn apply_commited_entries(&self) -> Result<(), rmp_serde::decode::Error> {
+        use crate::raft::config::{ConfigChange, RaftCommand};
+        use crate::raft::peer::Peer;
+
         let commit_index = *self.commit_index.read().await;
         let mut last_applied_guard = self.last_applied.write().await;
-        
+
         while *last_applied_guard < commit_index {
             *last_applied_guard += 1;
-            
+
             let entry = self.log.read().await.get(*last_applied_guard);
             if let Some(entry) = entry {
-                let command = rmp_serde::from_slice::<KvCommand>(&entry.command[..])?;
-                let _ = self.store.write().await.apply(command);
+                // Try to deserialize as RaftCommand first (new format)
+                if let Ok(raft_command) = rmp_serde::from_slice::<RaftCommand>(&entry.command[..]) {
+                    match raft_command {
+                        RaftCommand::Kv(kv_cmd) => {
+                            let _ = self.store.write().await.apply(kv_cmd);
+                        }
+                        RaftCommand::Config(config_change) => {
+                            self.apply_config_change(config_change).await;
+                        }
+                    }
+                } else {
+                    // Fallback to old format (direct KvCommand) for backward compatibility
+                    if let Ok(kv_command) = rmp_serde::from_slice::<KvCommand>(&entry.command[..]) {
+                        let _ = self.store.write().await.apply(kv_command);
+                    }
+                }
             }
         }
         Ok(())
+    }
+
+    async fn apply_config_change(&self, change: ConfigChange) {
+        match change {
+            ConfigChange::AddServer { id } => {
+                // Try to connect to the new server
+                if let Ok(peer) = Peer::new(id).await {
+                    self.peers.write().await.insert(id, peer);
+                    println!("[Node {}] Added server: {}", self.id.read().await, id);
+                }
+            }
+            ConfigChange::RemoveServer { id } => {
+                self.peers.write().await.remove(&id);
+                println!("[Node {}] Removed server: {}", self.id.read().await, id);
+
+                // If we're removing ourselves, step down
+                if *self.id.read().await == id {
+                    *self.role.write().await = RaftNodeRole::Follower;
+                }
+            }
+        }
     }
 
     async fn maybe_create_snapshot(&self) -> Result<(), Box<dyn std::error::Error>> {
@@ -503,6 +542,96 @@ impl LatticeNode {
 
         Ok(crate::raft::raft_proto::InstallSnapshotResponse {
             term: *self.current_term.read().await,
+        })
+    }
+
+    pub async fn handle_add_server(
+        &self,
+        request: crate::raft::raft_proto::AddServerRequest,
+    ) -> Result<crate::raft::raft_proto::AddServerResponse, Box<dyn std::error::Error>> {
+        use crate::raft::config::{ConfigChange, RaftCommand};
+
+        // Only leaders can process membership changes
+        if !matches!(*self.role.read().await, RaftNodeRole::Leader) {
+            return Ok(crate::raft::raft_proto::AddServerResponse {
+                success: false,
+                leader_hint: self.leader.read().await.map(|a| a.to_string()).unwrap_or_default(),
+            });
+        }
+
+        // Parse the server address
+        let server_addr: SocketAddr = request.server_address.parse()
+            .map_err(|_| "Invalid server address")?;
+
+        // Create configuration change command
+        let config_change = ConfigChange::AddServer { id: server_addr };
+        let command = RaftCommand::Config(config_change);
+        let command_bytes = rmp_serde::to_vec_named(&command)?;
+
+        // Append to log
+        let current_term = *self.current_term.read().await;
+        let mut log = self.log.write().await;
+        log.append(current_term, command_bytes)?;
+        let new_index = log.last_index();
+        drop(log);
+
+        // Wait for the entry to be committed (simplified - in production should have timeout)
+        let mut attempts = 0;
+        while *self.commit_index.read().await < new_index && attempts < 50 {
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+            attempts += 1;
+        }
+
+        let success = *self.commit_index.read().await >= new_index;
+
+        Ok(crate::raft::raft_proto::AddServerResponse {
+            success,
+            leader_hint: String::new(),
+        })
+    }
+
+    pub async fn handle_remove_server(
+        &self,
+        request: crate::raft::raft_proto::RemoveServerRequest,
+    ) -> Result<crate::raft::raft_proto::RemoveServerResponse, Box<dyn std::error::Error>> {
+        use crate::raft::config::{ConfigChange, RaftCommand};
+
+        // Only leaders can process membership changes
+        if !matches!(*self.role.read().await, RaftNodeRole::Leader) {
+            return Ok(crate::raft::raft_proto::RemoveServerResponse {
+                success: false,
+                leader_hint: self.leader.read().await.map(|a| a.to_string()).unwrap_or_default(),
+            });
+        }
+
+        // Parse the server ID
+        let server_addr: SocketAddr = request.server_id.parse()
+            .map_err(|_| "Invalid server ID")?;
+
+        // Create configuration change command
+        let config_change = ConfigChange::RemoveServer { id: server_addr };
+        let command = RaftCommand::Config(config_change);
+        let command_bytes = rmp_serde::to_vec_named(&command)?;
+
+        // Append to log
+        let current_term = *self.current_term.read().await;
+        let mut log = self.log.write().await;
+        log.append(current_term, command_bytes)?;
+        let new_index = log.last_index();
+        drop(log);
+
+        // Wait for the entry to be committed
+        let mut attempts = 0;
+        while *self.commit_index.read().await < new_index && attempts < 50 {
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+            attempts += 1;
+        }
+
+        let success = *self.commit_index.read().await >= new_index;
+
+        Ok(crate::raft::raft_proto::RemoveServerResponse {
+            success,
+            leader_hint: String::new(),
         })
     }
 }

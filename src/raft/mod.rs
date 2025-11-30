@@ -2,6 +2,7 @@ pub mod raft_proto {
     tonic::include_proto!("raft");
 }
 mod binary_log;
+pub mod config;
 pub mod log;
 pub mod node;
 pub mod peer;
@@ -11,7 +12,8 @@ use std::sync::Arc;
 
 pub use node::LatticeNode;
 use raft_proto::{
-    AppendEntriesRequest, AppendEntriesResponse, InstallSnapshotChunk, InstallSnapshotResponse,
+    AddServerRequest, AddServerResponse, AppendEntriesRequest, AppendEntriesResponse,
+    InstallSnapshotChunk, InstallSnapshotResponse, RemoveServerRequest, RemoveServerResponse,
     VoteRequest, VoteResponse, raft_node_server::RaftNode,
 };
 
@@ -57,6 +59,26 @@ impl RaftNode for LatticeRaftGrpcService {
         request: tonic::Request<InstallSnapshotChunk>,
     ) -> Result<tonic::Response<InstallSnapshotResponse>, tonic::Status> {
         match self.node.handle_install_snapshot(request.into_inner()).await {
+            Ok(response) => Ok(tonic::Response::new(response)),
+            Err(e) => Err(tonic::Status::internal(e.to_string())),
+        }
+    }
+
+    async fn add_server(
+        &self,
+        request: tonic::Request<AddServerRequest>,
+    ) -> Result<tonic::Response<AddServerResponse>, tonic::Status> {
+        match self.node.handle_add_server(request.into_inner()).await {
+            Ok(response) => Ok(tonic::Response::new(response)),
+            Err(e) => Err(tonic::Status::internal(e.to_string())),
+        }
+    }
+
+    async fn remove_server(
+        &self,
+        request: tonic::Request<RemoveServerRequest>,
+    ) -> Result<tonic::Response<RemoveServerResponse>, tonic::Status> {
+        match self.node.handle_remove_server(request.into_inner()).await {
             Ok(response) => Ok(tonic::Response::new(response)),
             Err(e) => Err(tonic::Status::internal(e.to_string())),
         }

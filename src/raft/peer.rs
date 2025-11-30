@@ -13,7 +13,7 @@ pub struct Peer {
 }
 
 impl Peer {
-    pub async fn new(address: SocketAddr) -> Result<Self, Box<dyn std::error::Error>> {
+    pub async fn new(address: SocketAddr) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let client = RaftNodeClient::connect(address.to_string()).await?;
         Ok(Self {
             address,
