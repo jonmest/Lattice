@@ -162,18 +162,23 @@ impl LatticeNode {
             let new_term = *current_term;
             drop(current_term);
 
-            *self.voted_for.write().await = Some(self.id.read().await.to_string());
+            let candidate_id = self.id.read().await.to_string();
+            *self.voted_for.write().await = Some(candidate_id.clone());
 
-            let population: u64 = self.peers.read().await.len().try_into().unwrap();
+            let last_log_index = self.log.read().await.last_index();
+            let last_log_term = self.log.read().await.last_term();
+
+            let peers_count = self.peers.read().await.len();
+            let population = peers_count + 1;
             let majority_threshold = population.div_ceil(2);
             let mut votes = 1;
 
             for p in self.peers.write().await.values_mut() {
                 let req = VoteRequest {
                     term: new_term,
-                    last_log_index: self.log.read().await.last_index(),
-                    last_log_term: self.log.read().await.last_term(),
-                    candidate_id: self.id.read().await.to_string(),
+                    last_log_index,
+                    last_log_term,
+                    candidate_id: candidate_id.clone(),
                 };
 
                 let vote_response = p.send_vote_request(req).await?;
