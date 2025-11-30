@@ -114,21 +114,11 @@ impl LatticeNode {
             }
 
             if !response.success {
-                self.peers
-                    .write()
-                    .await
-                    .entry(peer.address)
-                    .and_modify(|p| {
-                        if p.next_index > 1 {
-                            p.next_index -= 1;
-                        }
-                    });
+                if peer.next_index > 1 {
+                    peer.next_index -= 1;
+                }
             } else {
-                self.peers
-                    .write()
-                    .await
-                    .entry(peer.address)
-                    .and_modify(|p| p.match_index = response.cursor);
+                peer.match_index = response.cursor;
             }
         }
 
