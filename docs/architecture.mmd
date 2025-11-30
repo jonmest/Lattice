@@ -1,0 +1,16 @@
+graph TB
+    Client[Client] -->|gRPC| KV[KV Service]
+    KV -->|Commands| Node[Raft Node]
+    Node -->|Persist| Log[Binary Log]
+    Node -->|Apply| SM[State Machine]
+
+    Node -.->|AppendEntries| Peer1[Peer Node 1]
+    Node -.->|AppendEntries| Peer2[Peer Node 2]
+
+    style Client fill:#e1f5ff
+    style KV fill:#fff4e1
+    style Node fill:#ffe1f5
+    style Log fill:#e1ffe1
+    style SM fill:#f5e1ff
+    style Peer1 fill:#ffe1f5,stroke-dasharray: 5 5
+    style Peer2 fill:#ffe1f5,stroke-dasharray: 5 5
