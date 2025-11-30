@@ -10,6 +10,9 @@ heartbeat_interval_ms = 200
 # Create snapshot after this many log entries
 snapshot_threshold = 1000
 
+# Lease duration for lease-based reads in milliseconds (should be less than election timeout)
+lease_duration_ms = 1500
+
 [storage]
 # Path to the Raft log file
 log_path = "./log.db"

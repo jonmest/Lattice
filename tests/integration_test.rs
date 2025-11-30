@@ -37,7 +37,14 @@ async fn test_single_node_kv_operations() {
     let log = Arc::new(RwLock::new(LatticeLog::new(&log_path).unwrap()));
     let store = Arc::new(RwLock::new(LatticeStore::new()));
 
-    let raft_node = Arc::new(LatticeNode::new(id, peers, store.clone(), log, snapshot_path.clone()));
+    let raft_node = Arc::new(LatticeNode::new(
+        id,
+        peers,
+        store.clone(),
+        log,
+        snapshot_path.clone(),
+        Duration::from_millis(1500),
+    ));
 
     // Restore from snapshot if one exists
     raft_node.restore_from_snapshot().await.unwrap();
@@ -127,7 +134,14 @@ async fn test_two_node_cluster() {
 
         let log = Arc::new(RwLock::new(LatticeLog::new(&log_path).unwrap()));
         let store = Arc::new(RwLock::new(LatticeStore::new()));
-        let raft_node = Arc::new(LatticeNode::new(id, peers, store.clone(), log, snapshot_path));
+        let raft_node = Arc::new(LatticeNode::new(
+            id,
+            peers,
+            store.clone(),
+            log,
+            snapshot_path,
+            Duration::from_millis(1500),
+        ));
 
         // Restore from snapshot if one exists
         raft_node.restore_from_snapshot().await.unwrap();

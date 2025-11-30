@@ -17,6 +17,8 @@ pub struct RaftConfig {
     pub heartbeat_interval_ms: u64,
     /// Snapshot threshold (create snapshot after this many log entries)
     pub snapshot_threshold: usize,
+    /// Lease duration for lease-based reads in milliseconds
+    pub lease_duration_ms: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -62,6 +64,7 @@ impl Default for RaftConfig {
             election_timeout_ms: 2000,
             heartbeat_interval_ms: 200,
             snapshot_threshold: 1000,
+            lease_duration_ms: 1500,
         }
     }
 }
@@ -101,6 +104,10 @@ impl RaftConfig {
 
     pub fn heartbeat_interval(&self) -> Duration {
         Duration::from_millis(self.heartbeat_interval_ms)
+    }
+
+    pub fn lease_duration(&self) -> Duration {
+        Duration::from_millis(self.lease_duration_ms)
     }
 }
 

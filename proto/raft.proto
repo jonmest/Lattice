@@ -8,6 +8,8 @@ service RaftNode {
   rpc AddServer(AddServerRequest) returns (AddServerResponse);
   rpc RemoveServer(RemoveServerRequest) returns (RemoveServerResponse);
   rpc ReadQuery(ReadQueryRequest) returns (ReadQueryResponse);
+  rpc TransferLeadership(TransferLeadershipRequest) returns (TransferLeadershipResponse);
+  rpc TimeoutNow(TimeoutNowRequest) returns (TimeoutNowResponse);
 }
 
 message LogEntry {
@@ -85,5 +87,22 @@ message ReadQueryResponse {
   bool success = 1;
   bytes value = 2;
   string leader_hint = 3;
+}
+
+message TransferLeadershipRequest {
+  string target_id = 1;
+}
+
+message TransferLeadershipResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+message TimeoutNowRequest {
+  uint64 term = 1;
+}
+
+message TimeoutNowResponse {
+  uint64 term = 1;
 }
 

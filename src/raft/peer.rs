@@ -2,7 +2,8 @@ use std::net::SocketAddr;
 
 use crate::raft::raft_proto::{
     AppendEntriesRequest, AppendEntriesResponse, InstallSnapshotChunk,
-    InstallSnapshotResponse, VoteRequest, VoteResponse, raft_node_client::RaftNodeClient,
+    InstallSnapshotResponse, TimeoutNowRequest, TimeoutNowResponse, VoteRequest, VoteResponse,
+    raft_node_client::RaftNodeClient,
 };
 
 pub struct Peer {
@@ -52,6 +53,17 @@ impl Peer {
         let response = self
             .connection
             .install_snapshot(tonic::Request::new(req))
+            .await?;
+        Ok(response.into_inner())
+    }
+
+    pub async fn send_timeout_now(
+        &mut self,
+        req: TimeoutNowRequest,
+    ) -> std::result::Result<TimeoutNowResponse, tonic::Status> {
+        let response = self
+            .connection
+            .timeout_now(tonic::Request::new(req))
             .await?;
         Ok(response.into_inner())
     }

@@ -14,7 +14,7 @@ The codebase handles leader election, log replication, persistent storage, crash
 # Start a 3-node cluster
 cargo run --example cluster
 
-# Run all tests (30 unit + integration tests)
+# Run all tests (29 unit + integration tests)
 cargo test
 ```
 
@@ -121,11 +121,11 @@ Running `cargo test` isn't performative—those tests actually caught issues dur
 - **InstallSnapshot RPC**: Catch up followers that are too far behind
 - **Dynamic Membership**: Add/remove nodes from running cluster via AddServer/RemoveServer RPCs
 - **Operation Batching**: Group multiple operations into single Raft entry for improved throughput
+- **Lease-Based Reads**: Leader serves read-only queries without log replication when holding valid lease (renewed on heartbeat to majority)
+- **Leadership Transfer**: Graceful handoff of leadership via TransferLeadership RPC (leader brings target up to date, sends TimeoutNow to trigger immediate election)
 
 ### Not Implemented
-- Optimized reads (lease-based reads to avoid log replication)
 - Pre-vote (prevent disruption from partitioned candidates)
-- Leadership transfer (graceful handoff during maintenance)
 
 ## What I Learned
 

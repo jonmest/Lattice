@@ -1,7 +1,7 @@
 mod kv;
 mod raft;
 
-use std::{collections::HashMap, net::SocketAddr, sync::Arc};
+use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Duration};
 
 use tokio::sync::RwLock;
 
@@ -26,7 +26,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let log = Arc::new(RwLock::new(LatticeLog::new(path)?));
     let store = Arc::new(RwLock::new(LatticeStore::new()));
 
-    let raft_node = Arc::new(LatticeNode::new(id, peers, store.clone(), log, snapshot_path));
+    let raft_node = Arc::new(LatticeNode::new(
+        id,
+        peers,
+        store.clone(),
+        log,
+        snapshot_path,
+        Duration::from_millis(1500),
+    ));
 
     // Restore from snapshot if one exists
     raft_node.restore_from_snapshot().await?;

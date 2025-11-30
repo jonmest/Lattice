@@ -14,7 +14,8 @@ pub use node::LatticeNode;
 use raft_proto::{
     AddServerRequest, AddServerResponse, AppendEntriesRequest, AppendEntriesResponse,
     InstallSnapshotChunk, InstallSnapshotResponse, ReadQueryRequest, ReadQueryResponse,
-    RemoveServerRequest, RemoveServerResponse, VoteRequest, VoteResponse,
+    RemoveServerRequest, RemoveServerResponse, TimeoutNowRequest, TimeoutNowResponse,
+    TransferLeadershipRequest, TransferLeadershipResponse, VoteRequest, VoteResponse,
     raft_node_server::RaftNode,
 };
 
@@ -90,6 +91,26 @@ impl RaftNode for LatticeRaftGrpcService {
         request: tonic::Request<ReadQueryRequest>,
     ) -> Result<tonic::Response<ReadQueryResponse>, tonic::Status> {
         match self.node.handle_read_query(request.into_inner()).await {
+            Ok(response) => Ok(tonic::Response::new(response)),
+            Err(e) => Err(tonic::Status::internal(e.to_string())),
+        }
+    }
+
+    async fn transfer_leadership(
+        &self,
+        request: tonic::Request<TransferLeadershipRequest>,
+    ) -> Result<tonic::Response<TransferLeadershipResponse>, tonic::Status> {
+        match self.node.handle_transfer_leadership(request.into_inner()).await {
+            Ok(response) => Ok(tonic::Response::new(response)),
+            Err(e) => Err(tonic::Status::internal(e.to_string())),
+        }
+    }
+
+    async fn timeout_now(
+        &self,
+        request: tonic::Request<TimeoutNowRequest>,
+    ) -> Result<tonic::Response<TimeoutNowResponse>, tonic::Status> {
+        match self.node.handle_timeout_now(request.into_inner()).await {
             Ok(response) => Ok(tonic::Response::new(response)),
             Err(e) => Err(tonic::Status::internal(e.to_string())),
         }

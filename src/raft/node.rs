@@ -52,8 +52,8 @@ impl LatticeNode {
         store: Arc<RwLock<LatticeStore>>,
         log: Arc<RwLock<LatticeLog>>,
         snapshot_path: String,
+        lease_duration: Duration,
     ) -> LatticeNode {
-        let lease_duration = Duration::from_millis(1500); // Less than election timeout
         Self {
             id: RwLock::new(id),
             timer: RwLock::new(Instant::now()),
@@ -710,6 +710,111 @@ impl LatticeNode {
             leader_hint: String::new(),
         })
     }
+
+    pub async fn handle_timeout_now(
+        &self,
+        request: crate::raft::raft_proto::TimeoutNowRequest,
+    ) -> Result<crate::raft::raft_proto::TimeoutNowResponse, Box<dyn std::error::Error>> {
+        let current_term = *self.current_term.read().await;
+
+        // Update term if necessary
+        if request.term > current_term {
+            *self.current_term.write().await = request.term;
+            *self.voted_for.write().await = None;
+            *self.role.write().await = RaftNodeRole::Follower;
+        }
+
+        // Immediately trigger election by resetting timer and becoming candidate
+        *self.timer.write().await = Instant::now() - self.timeout;
+        info!("Received TimeoutNow, starting election immediately");
+
+        Ok(crate::raft::raft_proto::TimeoutNowResponse {
+            term: *self.current_term.read().await,
+        })
+    }
+
+    pub async fn handle_transfer_leadership(
+        &self,
+        request: crate::raft::raft_proto::TransferLeadershipRequest,
+    ) -> Result<crate::raft::raft_proto::TransferLeadershipResponse, Box<dyn std::error::Error>> {
+        // Only leaders can transfer leadership
+        if !matches!(*self.role.read().await, RaftNodeRole::Leader) {
+            return Ok(crate::raft::raft_proto::TransferLeadershipResponse {
+                success: false,
+                message: "Not the leader".to_string(),
+            });
+        }
+
+        let target_addr: SocketAddr = request.target_id.parse()
+            .map_err(|_| "Invalid target address")?;
+
+        // Check if target is in peer list
+        {
+            let peers = self.peers.read().await;
+            if !peers.contains_key(&target_addr) {
+                return Ok(crate::raft::raft_proto::TransferLeadershipResponse {
+                    success: false,
+                    message: "Target not in cluster".to_string(),
+                });
+            }
+        }
+
+        // Bring target up to date by sending entries until caught up
+        let last_log_index = self.log.read().await.last_index();
+
+        info!("Transferring leadership to {}", target_addr);
+
+        // Wait for target to catch up (simplified - could timeout in production)
+        let mut attempts = 0;
+        loop {
+            let peers = self.peers.read().await;
+            if let Some(peer) = peers.get(&target_addr) {
+                if peer.match_index >= last_log_index {
+                    break;
+                }
+            }
+            drop(peers);
+
+            if attempts >= 50 {
+                break;
+            }
+            attempts += 1;
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        }
+
+        // Send TimeoutNow to target
+        let mut peers = self.peers.write().await;
+        if let Some(peer) = peers.get_mut(&target_addr) {
+            let current_term = *self.current_term.read().await;
+            let req = crate::raft::raft_proto::TimeoutNowRequest {
+                term: current_term,
+            };
+
+            match peer.send_timeout_now(req).await {
+                Ok(_) => {
+                    // Step down as leader
+                    *self.role.write().await = RaftNodeRole::Follower;
+                    info!("Stepped down, transferred leadership to {}", target_addr);
+
+                    Ok(crate::raft::raft_proto::TransferLeadershipResponse {
+                        success: true,
+                        message: "Leadership transferred".to_string(),
+                    })
+                }
+                Err(e) => {
+                    Ok(crate::raft::raft_proto::TransferLeadershipResponse {
+                        success: false,
+                        message: format!("Failed to send TimeoutNow: {}", e),
+                    })
+                }
+            }
+        } else {
+            Ok(crate::raft::raft_proto::TransferLeadershipResponse {
+                success: false,
+                message: "Target disappeared from cluster".to_string(),
+            })
+        }
+    }
 }
 
 #[cfg(test)]
@@ -739,7 +844,14 @@ mod tests {
         let log = Arc::new(TokioRwLock::new(log_obj));
 
         let snapshot_path = temp_path("vote_snapshot");
-        let node = LatticeNode::new(addr, peers, store.clone(), log.clone(), snapshot_path);
+        let node = LatticeNode::new(
+            addr,
+            peers,
+            store.clone(),
+            log.clone(),
+            snapshot_path,
+            Duration::from_millis(1500),
+        );
 
         let req = VoteRequest {
             term: 1,
@@ -768,7 +880,14 @@ mod tests {
         let log = Arc::new(TokioRwLock::new(log_inner));
 
         let snapshot_path = temp_path("append_snapshot");
-        let node = LatticeNode::new(addr, peers, store.clone(), log.clone(), snapshot_path);
+        let node = LatticeNode::new(
+            addr,
+            peers,
+            store.clone(),
+            log.clone(),
+            snapshot_path,
+            Duration::from_millis(1500),
+        );
 
         // make a kv set command
         let cmd = crate::kv::KvCommand::Set {
@@ -828,6 +947,7 @@ mod tests {
             store.clone(),
             log.clone(),
             snapshot_path,
+            Duration::from_millis(1500),
         ));
 
         // Initially, no lease should be valid (not a leader)
