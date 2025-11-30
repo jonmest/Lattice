@@ -13,8 +13,9 @@ use std::sync::Arc;
 pub use node::LatticeNode;
 use raft_proto::{
     AddServerRequest, AddServerResponse, AppendEntriesRequest, AppendEntriesResponse,
-    InstallSnapshotChunk, InstallSnapshotResponse, RemoveServerRequest, RemoveServerResponse,
-    VoteRequest, VoteResponse, raft_node_server::RaftNode,
+    InstallSnapshotChunk, InstallSnapshotResponse, ReadQueryRequest, ReadQueryResponse,
+    RemoveServerRequest, RemoveServerResponse, VoteRequest, VoteResponse,
+    raft_node_server::RaftNode,
 };
 
 pub struct LatticeRaftGrpcService {
@@ -79,6 +80,16 @@ impl RaftNode for LatticeRaftGrpcService {
         request: tonic::Request<RemoveServerRequest>,
     ) -> Result<tonic::Response<RemoveServerResponse>, tonic::Status> {
         match self.node.handle_remove_server(request.into_inner()).await {
+            Ok(response) => Ok(tonic::Response::new(response)),
+            Err(e) => Err(tonic::Status::internal(e.to_string())),
+        }
+    }
+
+    async fn read_query(
+        &self,
+        request: tonic::Request<ReadQueryRequest>,
+    ) -> Result<tonic::Response<ReadQueryResponse>, tonic::Status> {
+        match self.node.handle_read_query(request.into_inner()).await {
             Ok(response) => Ok(tonic::Response::new(response)),
             Err(e) => Err(tonic::Status::internal(e.to_string())),
         }

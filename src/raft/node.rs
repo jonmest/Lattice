@@ -39,6 +39,10 @@ pub struct LatticeNode {
     snapshot_path: String,
     snapshot_metadata: RwLock<Option<SnapshotMetadata>>,
     snapshot_threshold: usize,
+
+    // Lease-based reads
+    lease_expiration: RwLock<Option<Instant>>,
+    lease_duration: Duration,
 }
 
 impl LatticeNode {
@@ -49,6 +53,7 @@ impl LatticeNode {
         log: Arc<RwLock<LatticeLog>>,
         snapshot_path: String,
     ) -> LatticeNode {
+        let lease_duration = Duration::from_millis(1500); // Less than election timeout
         Self {
             id: RwLock::new(id),
             timer: RwLock::new(Instant::now()),
@@ -65,6 +70,8 @@ impl LatticeNode {
             snapshot_path,
             snapshot_metadata: RwLock::new(None),
             snapshot_threshold: 1000,
+            lease_expiration: RwLock::new(None),
+            lease_duration,
         }
     }
 
@@ -77,6 +84,22 @@ impl LatticeNode {
             *self.last_applied.write().await = snapshot.metadata.last_included_index;
         }
         Ok(())
+    }
+
+    /// Check if the current lease is valid for serving reads
+    pub async fn has_valid_lease(&self) -> bool {
+        if let Some(expiration) = *self.lease_expiration.read().await {
+            Instant::now() < expiration
+        } else {
+            false
+        }
+    }
+
+    /// Renew the lease (called after successful heartbeat to majority)
+    async fn renew_lease(&self) {
+        let new_expiration = Instant::now() + self.lease_duration;
+        *self.lease_expiration.write().await = Some(new_expiration);
+        debug!("Lease renewed until {:?}", new_expiration);
     }
 }
 
@@ -171,6 +194,8 @@ impl LatticeNode {
         let log = self.log.read().await;
         let current_term = *self.current_term.read().await;
 
+        let mut successful_responses = 0;
+
         for peer in peers.values_mut() {
             // Check if we need to send a snapshot instead of AppendEntries
             let needs_snapshot = if peer.next_index <= 1 {
@@ -208,6 +233,7 @@ impl LatticeNode {
                         // Update peer's indices after successful snapshot install
                         peer.next_index = snapshot_meta.last_included_index + 1;
                         peer.match_index = snapshot_meta.last_included_index;
+                        successful_responses += 1;
                     }
                 }
                 continue;
@@ -251,13 +277,18 @@ impl LatticeNode {
                 }
             } else {
                 peer.match_index = response.cursor;
+                successful_responses += 1;
             }
         }
+
+        // Check if we should renew the lease (successful communication with majority)
+        let population = peers.len() + 1; // peers + self
+        let majority = population.div_ceil(2);
+        let should_renew_lease = successful_responses + 1 >= majority; // +1 for self
 
         // Advance commit_index based on what's been replicated to a majority
         let current_commit = *self.commit_index.read().await;
         let last_log_index = log.last_index();
-        let population = peers.len() + 1; // peers + self
 
         // Try to find the highest index N that has been replicated to a majority
         for n in (current_commit + 1)..=last_log_index {
@@ -279,6 +310,11 @@ impl LatticeNode {
                     }
                 }
             }
+        }
+
+        // Renew lease if we successfully communicated with a majority
+        if should_renew_lease {
+            self.renew_lease().await;
         }
 
         Ok(())
@@ -637,6 +673,43 @@ impl LatticeNode {
             leader_hint: String::new(),
         })
     }
+
+    #[instrument(skip(self, request), fields(key_len = request.key.len()))]
+    pub async fn handle_read_query(
+        &self,
+        request: crate::raft::raft_proto::ReadQueryRequest,
+    ) -> Result<crate::raft::raft_proto::ReadQueryResponse, Box<dyn std::error::Error>> {
+        // Check if we're the leader
+        if !matches!(*self.role.read().await, RaftNodeRole::Leader) {
+            return Ok(crate::raft::raft_proto::ReadQueryResponse {
+                success: false,
+                value: vec![],
+                leader_hint: self.leader.read().await.map(|a| a.to_string()).unwrap_or_default(),
+            });
+        }
+
+        // Check if we have a valid lease
+        if !self.has_valid_lease().await {
+            info!("Read query rejected: no valid lease");
+            return Ok(crate::raft::raft_proto::ReadQueryResponse {
+                success: false,
+                value: vec![],
+                leader_hint: String::new(),
+            });
+        }
+
+        // Serve the read from the state machine
+        let store = self.store.read().await;
+        let value = store.get(&request.key).cloned().unwrap_or_default();
+
+        debug!("Served lease-based read for key (length: {})", request.key.len());
+
+        Ok(crate::raft::raft_proto::ReadQueryResponse {
+            success: true,
+            value,
+            leader_hint: String::new(),
+        })
+    }
 }
 
 #[cfg(test)]
@@ -728,6 +801,75 @@ mod tests {
         let read_log = log.read().await;
         let got = read_log.get(1).expect("get appended");
         assert_eq!(got.command, cmd_bytes);
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn test_lease_based_reads() {
+        use crate::kv::KvCommand;
+        use std::collections::HashMap;
+
+        let addr: SocketAddr = "127.0.0.1:9003".parse().unwrap();
+        let peers: HashMap<SocketAddr, Peer> = HashMap::new();
+
+        let store = Arc::new(TokioRwLock::new(crate::kv::LatticeStore::new()));
+
+        let path = temp_path("lease_test");
+        let _ = std::fs::remove_file(&path);
+        let _ = crate::raft::binary_log::BinaryLog::open(&path).expect("open");
+        let log_obj = crate::raft::log::LatticeLog::new(&path).expect("create lattice log");
+        let log = Arc::new(TokioRwLock::new(log_obj));
+
+        let snapshot_path = temp_path("lease_test_snapshot");
+        let node = Arc::new(LatticeNode::new(
+            addr,
+            peers,
+            store.clone(),
+            log.clone(),
+            snapshot_path,
+        ));
+
+        // Initially, no lease should be valid (not a leader)
+        assert!(!node.has_valid_lease().await);
+
+        // Make this node the leader
+        *node.role.write().await = RaftNodeRole::Leader;
+
+        // Still no lease until we renew it
+        assert!(!node.has_valid_lease().await);
+
+        // Renew the lease
+        node.renew_lease().await;
+
+        // Now lease should be valid
+        assert!(node.has_valid_lease().await);
+
+        // Insert a test key-value pair
+        store.write().await.set(b"test_key".to_vec(), b"test_value".to_vec());
+
+        // Test lease-based read
+        let read_request = crate::raft::raft_proto::ReadQueryRequest {
+            key: b"test_key".to_vec(),
+        };
+
+        let response = node.handle_read_query(read_request).await.expect("read query");
+        assert!(response.success);
+        assert_eq!(response.value, b"test_value");
+
+        // Wait for lease to expire
+        tokio::time::sleep(tokio::time::Duration::from_millis(2000)).await;
+
+        // Lease should now be invalid
+        assert!(!node.has_valid_lease().await);
+
+        // Read query should fail with no valid lease
+        let read_request2 = crate::raft::raft_proto::ReadQueryRequest {
+            key: b"test_key".to_vec(),
+        };
+
+        let response2 = node.handle_read_query(read_request2).await.expect("read query");
+        assert!(!response2.success);
 
         let _ = std::fs::remove_file(&path);
     }
