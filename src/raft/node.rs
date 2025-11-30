@@ -88,14 +88,19 @@ impl LatticeNode {
                     log.entries_from(peer.next_index)
                 }
             };
-            let prev_log_item = &log.get(peer.next_index - 1);
-            let prev_log_item = &prev_log_item.as_ref().unwrap();
+
+            let (prev_log_index, prev_log_term) = if peer.next_index <= 1 {
+                (0, 0)
+            } else {
+                let prev_log_item = log.get(peer.next_index - 1).unwrap();
+                (prev_log_item.index, prev_log_item.term)
+            };
 
             let req = AppendEntriesRequest {
                 term: current_term,
                 leader_id: self.id.read().await.to_string(),
-                prev_log_index: prev_log_item.index,
-                prev_log_term: prev_log_item.term,
+                prev_log_index,
+                prev_log_term,
                 leader_commit: *self.commit_index.read().await,
                 entries: to_send.to_vec(),
             };
