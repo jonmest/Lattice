@@ -40,7 +40,7 @@ impl LatticeLog {
 
 impl Log for LatticeLog {
     fn append(&mut self, term: u64, command: Vec<u8>) -> Result<u64, std::io::Error> {
-        let index = self.entries.len() as u64;
+        let index = self.entries.len() as u64 + 1;
         let entry = LogEntry {
             term,
             index,
@@ -52,11 +52,18 @@ impl Log for LatticeLog {
     }
 
     fn get(&self, index: u64) -> Option<LogEntry> {
-        self.entries.get(index as usize).cloned()
+        if index == 0 {
+            return None;
+        }
+        self.entries.get((index - 1) as usize).cloned()
     }
 
     fn truncate(&mut self, from_index: u64) {
-        self.entries.truncate(from_index as usize);
+        if from_index == 0 {
+            self.entries.clear();
+        } else {
+            self.entries.truncate((from_index - 1) as usize);
+        }
     }
 
     fn last_index(&self) -> u64 {
@@ -68,7 +75,11 @@ impl Log for LatticeLog {
     }
 
     fn entries_from(&self, start: u64) -> &[LogEntry] {
-        &self.entries[start as usize..]
+        if start == 0 {
+            &self.entries
+        } else {
+            &self.entries[(start - 1) as usize..]
+        }
     }
 }
 
@@ -88,7 +99,6 @@ mod tests {
         let path = temp_path("basic");
         let _ = fs::remove_file(&path);
 
-        // create an empty binary log first
         let _ = BinaryLog::open(&path).expect("open binlog");
 
         let mut l = LatticeLog::new(&path).expect("create lattice log");
@@ -97,11 +107,11 @@ mod tests {
         assert_eq!(l.last_term(), 0);
 
         let idx = l.append(1, b"cmd1".to_vec()).expect("append");
-        assert_eq!(idx, 0);
+        assert_eq!(idx, 1);
         assert_eq!(l.last_index(), 1);
         assert_eq!(l.last_term(), 1);
 
-        let got = l.get(0).expect("get entry");
+        let got = l.get(1).expect("get entry");
         assert_eq!(got.term, 1);
         assert_eq!(got.command, b"cmd1".to_vec());
 

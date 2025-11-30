@@ -58,7 +58,7 @@ impl LatticeNode {
 }
 
 impl LatticeNode {
-    pub async fn apply_commited_entries(&mut self) -> Result<(), rmp_serde::decode::Error> {
+    pub async fn apply_commited_entries(&self) -> Result<(), rmp_serde::decode::Error> {
         let commit_index = *self.commit_index.read().await;
         let mut last_applied_guard = self.last_applied.write().await;
         
@@ -100,18 +100,57 @@ impl LatticeNode {
                 entries: to_send.to_vec(),
             };
             let response = peer.send_append_entries(req).await?;
+
+            if response.term > current_term {
+                *self.current_term.write().await = response.term;
+                *self.voted_for.write().await = None;
+                *self.role.write().await = RaftNodeRole::Follower;
+                return Ok(());
+            }
+
             if !response.success {
                 self.peers
                     .write()
                     .await
                     .entry(peer.address)
-                    .and_modify(|p| p.next_index -= 1);
+                    .and_modify(|p| {
+                        if p.next_index > 1 {
+                            p.next_index -= 1;
+                        }
+                    });
             } else {
                 self.peers
                     .write()
                     .await
                     .entry(peer.address)
                     .and_modify(|p| p.match_index = response.cursor);
+            }
+        }
+
+        // Advance commit_index based on what's been replicated to a majority
+        let current_commit = *self.commit_index.read().await;
+        let last_log_index = log.last_index();
+        let population = peers.len() + 1; // peers + self
+
+        // Try to find the highest index N that has been replicated to a majority
+        for n in (current_commit + 1)..=last_log_index {
+            let mut replication_count = 1; // Count self
+
+            // Count how many peers have replicated up to index n
+            for peer in peers.values() {
+                if peer.match_index >= n {
+                    replication_count += 1;
+                }
+            }
+
+            // If a majority has replicated index n, we can commit it
+            if replication_count >= population.div_ceil(2) {
+                // Only commit entries from current term (Raft safety requirement)
+                if let Some(entry) = log.get(n) {
+                    if entry.term == current_term {
+                        *self.commit_index.write().await = n;
+                    }
+                }
             }
         }
 
@@ -124,26 +163,47 @@ impl LatticeNode {
         if duration > self.timeout {
             *self.role.write().await = RaftNodeRole::Candidate;
 
+            let mut current_term = self.current_term.write().await;
+            *current_term += 1;
+            let new_term = *current_term;
+            drop(current_term);
+
+            *self.voted_for.write().await = Some(self.id.read().await.to_string());
+
             let population: u64 = self.peers.read().await.len().try_into().unwrap();
             let majority_threshold = population.div_ceil(2);
-            let mut votes = 0;
+            let mut votes = 1;
 
-            // request election
             for p in self.peers.write().await.values_mut() {
                 let req = VoteRequest {
-                    term: *self.current_term.read().await,
+                    term: new_term,
                     last_log_index: self.log.read().await.last_index(),
                     last_log_term: self.log.read().await.last_term(),
                     candidate_id: self.id.read().await.to_string(),
                 };
 
                 let vote_response = p.send_vote_request(req).await?;
+
+                if vote_response.term > new_term {
+                    *self.current_term.write().await = vote_response.term;
+                    *self.voted_for.write().await = None;
+                    *self.role.write().await = RaftNodeRole::Follower;
+                    return Ok(());
+                }
+
                 if vote_response.granted {
                     votes += 1;
                 }
             }
             if votes >= majority_threshold {
                 *self.role.write().await = RaftNodeRole::Leader;
+
+                let last_log_index = self.log.read().await.last_index();
+                let mut peers = self.peers.write().await;
+                for peer in peers.values_mut() {
+                    peer.next_index = last_log_index + 1;
+                    peer.match_index = 0;
+                }
             } else {
                 *self.role.write().await = RaftNodeRole::Follower;
             }
@@ -173,6 +233,7 @@ impl LatticeNode {
         if vote_request.term > current_term {
             *self.current_term.write().await = vote_request.term;
             *self.voted_for.write().await = None;
+            *self.role.write().await = RaftNodeRole::Follower;
             current_term = vote_request.term;
             voted_for = None;
         }
@@ -215,11 +276,11 @@ impl LatticeNode {
             });
         }
 
-        // if our term is outdated, update and turn into follower
         if request.term > current_term {
-            current_term = request.term;
+            *self.current_term.write().await = request.term;
             *self.voted_for.write().await = None;
             *self.role.write().await = RaftNodeRole::Follower;
+            current_term = request.term;
         }
         *self.leader.write().await = Some(
             request
@@ -347,7 +408,7 @@ mod tests {
 
         let entry = LogEntry {
             term: 1,
-            index: 0,
+            index: 1,
             command: cmd_bytes.clone(),
         };
 
@@ -366,9 +427,8 @@ mod tests {
             .expect("append_entries");
         assert!(resp.success);
 
-        // verify the log contains the appended command at index 0
         let read_log = log.read().await;
-        let got = read_log.get(0).expect("get appended");
+        let got = read_log.get(1).expect("get appended");
         assert_eq!(got.command, cmd_bytes);
 
         let _ = std::fs::remove_file(&path);
